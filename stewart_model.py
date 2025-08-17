@@ -19,9 +19,7 @@ class BodyModel:
                  cushion_thickness: float = CUSHION_THICKNESS,
                  body_center_height: float = BODY_CENTER_HEIGHT,
                  body_inertia: list[list[float]] = BODY_INERTIA,
-                 cushion_radius: float = CUSHION_RADIUS,
                  cushion_params: list[float] = CUSHION_PARAMS,
-                 cushion_joints_angle: list[float] = CUSHION_JOINTS_ANGLE,
                  ):
         """
         研究人体动力学时，将车辆坐标系平移到座椅（运动时）中心为基准坐标系，
@@ -31,39 +29,35 @@ class BodyModel:
         动，故没有产生科氏力。若需计算人体相对于底座中心处全局坐标系的位移，
         平动位移只需加上座椅中心处的位移即可，转动位移不需要变换，因为这两
         个坐标系都是车辆坐标系的平移，并未发生相对转动。
-        座椅之上有坐垫，坐垫之上是人体。将坐垫考虑为 6 个垂直于座椅的悬架，
-        发生侧倾俯仰时，就不一定会垂直于人体屁股所在的平面了。
+        座椅之上有坐垫，坐垫之上是人体。将坐垫考虑为 1 个垂直于座椅的悬架，
+        这个悬架包含垂向、侧倾（等效为卷簧）、俯仰（等效为卷簧）三个方向的弹
+        簧减振器。
+        设人体屁股中心处 x, y 坐标与座椅中心处 x, y 坐标相同，且人体的 yaw
+        姿态与座椅的 yaw 姿态相同。人体相对于座椅只有 z, roll, pitch 三个
+        方向的位移，所以人体的姿态用 3 个坐标 (z, roll, pitch) 来表示。
         """
 
         self.body_mass = body_mass
         self.cushion_thickness = cushion_thickness
         self.body_center_height = body_center_height
-        self.body_inertia = np.array(body_inertia)
-        self.cushion_radius = cushion_radius
+        self.body_inertia = np.array(body_inertia, dtype=float)
+
         self.cushion_params = np.array(cushion_params)
-        # 将坐垫等效为 6 根弹簧阻尼部件
-        self.cushion_joints_angle = np.array(
-            [np.radians(x) for x in cushion_joints_angle])
 
-        self.cushion_seat_joints_local = self._get_joints_local_position(
-            self.cushion_radius, self.cushion_joints_angle)
+        self.body_center_local = np.array(
+            [0, 0, self.body_center_height], dtype=float)
 
-        self.buttocks_joints_local = self._get_joints_local_position(
-            self.cushion_radius, self.cushion_joints_angle)
-
-        self.body_to_buttocks_local = np.array(
-            [0, 0, -self.body_center_height])
-        self.seat_to_body_local = np.array(
-            [0, 0, self.cushion_thickness + self.body_center_height])
+        self.butt_inertia = self._get_inertia_matrix(self.body_mass,
+                                                     self.body_inertia,
+                                                     self.body_center_local)
 
         # 记录上一时刻的坐垫等效悬架变形量
-        self.suspensions_stroke = np.zeros(6, dtype=float)
-        self.suspensions_velocity = np.zeros(6, dtype=float)
+        self.strokes_previous = np.zeros(3, dtype=float)
 
         # 在（运动的）座椅中心坐标系下，人体质心相对于质心初始位置的位移
-        self.body_motion = np.zeros(6, dtype=float)
-        self.body_velocity = np.zeros(6, dtype=float)
-        self.body_acceleration = np.zeros(6, dtype=float)
+        self.butt_motion = np.zeros(3, dtype=float)
+        self.butt_velocity = np.zeros(3, dtype=float)
+        self.butt_acceleration = np.zeros(3, dtype=float)
 
     @staticmethod
     def _get_rotation_matrix(euler_angles: np.ndarray) -> np.ndarray:
@@ -82,12 +76,12 @@ class BodyModel:
 
         Rz = np.array([
             [np.cos(yaw), -np.sin(yaw), 0],
-            [np.sin(yaw), np.cos(yaw), 0],
+            [+np.sin(yaw), np.cos(yaw), 0],
             [0, 0, 1]
         ])
 
         Ry = np.array([
-            [np.cos(pitch), 0, np.sin(pitch)],
+            [np.cos(pitch), 0, +np.sin(pitch)],
             [0, 1, 0],
             [-np.sin(pitch), 0, np.cos(pitch)]
         ])
@@ -95,7 +89,7 @@ class BodyModel:
         Rx = np.array([
             [1, 0, 0],
             [0, np.cos(roll), -np.sin(roll)],
-            [0, np.sin(roll), np.cos(roll)]
+            [0, +np.sin(roll), np.cos(roll)]
         ])
 
         # 旋转顺序: X (Roll) -> Y (Pitch) -> Z (Yaw)
@@ -110,6 +104,18 @@ class BodyModel:
                                   for x in angles])
         return local_position
 
+    @staticmethod
+    def _get_inertia_matrix(mass: float, inertia: np.ndarray, radius: np.ndarray) -> np.ndarray:
+        """
+        根据平移定理，计算质心不在坐标系原点时的转动惯量矩阵。
+        """
+
+        inertia_offset = inertia.copy()
+        inertia_offset += mass * \
+            (radius @ radius.T * np.eye(3) - np.outer(radius, radius))
+
+        return inertia_offset
+
     def _body_dynamics(self, seat_motion: np.ndarray, external_acceleration: np.ndarray, dt: float):
         """
         目的：当输入为座椅运动位移与加速度时，计算人体的动态响应，并返回坐垫对
@@ -118,308 +124,93 @@ class BodyModel:
         参数：
             seat_motion: (6,) 数组，在全局坐标系下，座椅中心相对于其初始位置的位
                 移。
-            external_acceleration = [ax, ay, 0]: (3,) 数组，ax 与 ay 表示由于
+            external_acceleration = [ax, ay]: (2,) 数组，ax 与 ay 表示由于
                 车体转向、加/减速等运动导致人体受到的加速度，这些加速度都是水平的，
-                故只有纵向与侧向两个分量。其第 3 个分量为零，是为了计算方便。
+                故只有纵向与侧向两个分量。惯性载荷的 z 向分量为零，故仅考虑 x, y。
             dt: 采样时间。
 
         返回：
-            force_on_seat: 座椅中心处受到的来自坐垫的力；
-            momentum_on_seat: 座椅中心处受到的来自坐垫的力矩。
-
-        注意：
-            body_motion: 人体质心在（运动的）局部坐标系（车辆坐标系平移至座椅中
-                心处坐标系）下，相对于质心初始位置的位移；也就是说，人体质心先相
-                对于（运动的）座椅处车辆坐标系平移，人体再相对于人体质心旋转（旋
-                转是绝对的）。理解这一点，对于求解屁股中心处位移非常重要。
-            本函数采用 Euler-Forward 积分法进行数值计算。
+            force_on_seat: 座椅中心处受到的来自坐垫的力，仅包含 (z, phi, theta) 方向分量；
+            external_forces: 人体对座椅在 x, y 方向的惯性力。
         """
 
-        # 1. 计算坐垫等效悬架在坐椅上的铰点的位置
-        seat_translation = seat_motion[:3]  # 座椅平动位移 (全局)
-        seat_rotation = seat_motion[3:]  # 座椅转动欧拉角 (全局)
+        forces_on_butt, external_forces = \
+            self._get_cushion_forces(seat_motion, external_acceleration, dt)
 
-        Rs = self._get_rotation_matrix(seat_rotation)
-        # 计算坐垫下表面铰点（即座椅上的铰点）在（初始）座椅坐标系下的实际位置
-        # 坐垫坐标相对于初始状态时座椅中心
-        cushion_seat_joints_actual = seat_translation + \
-            self.cushion_seat_joints_local @ Rs.T
+        self._get_butt_acceleration(forces_on_butt)
 
-        # 2. 计算坐垫等效悬架在屁股上的铰点的位置
-        # body_motion 是人体质心相对于（运动时）座椅中心的位移
-        body_translation = self.body_motion[:3]
-        body_rotation = self.body_motion[3:]
-
-        Rb = self._get_rotation_matrix(body_rotation)
-        # 计算坐垫上表面铰点（即屁股下的铰点）在（初始）座椅坐标系下的实际位置
-        buttocks_joints_actual = seat_translation + \
-            self.seat_to_body_local + body_translation + \
-            self.body_to_buttocks_local @ Rb.T + self.buttocks_joints_local @ Rb.T
-
-        # 3. 计算坐垫等效悬架的变形量
-        suspensions_length = np.linalg.norm(
-            buttocks_joints_actual-cushion_seat_joints_actual, axis=1)
-
-        suspensions_stroke_current = suspensions_length - self.cushion_thickness
-        self.suspensions_velocity = (suspensions_stroke_current -
-                                     self.suspensions_stroke) / dt
-        self.suspensions_stroke = suspensions_stroke_current
-
-        # 4. 计算坐垫等效悬架的方向向量
-        suspensions_direction = (
-            buttocks_joints_actual - cushion_seat_joints_actual)
-
-        suspensions_direction /= suspensions_length[:, np.newaxis]
-
-        # 5. 计算人体受到的力
-        mb = self.body_mass
-        cb, kb = self.cushion_params
-
-        suspensions_force = kb*self.suspensions_stroke + cb*self.suspensions_velocity
-        suspensions_force_vector = np.zeros((6, 3), dtype=float)
-
-        # 计算坐垫悬架力作用点相对于（运动时）人体质心的位置矢量
-        momentum_radius = self.body_to_buttocks_local @ Rb.T + \
-            self.buttocks_joints_local @ Rb.T
-
-        force_on_body = np.zeros(3, dtype=float)
-        momentum_on_body = np.zeros(3, dtype=float)
-        for i in range(6):
-            suspensions_force_vector[i] = suspensions_force[i] * \
-                suspensions_direction[i]
-            # 将坐垫悬架作用力移动至人体质心处
-            force_on_body += suspensions_force_vector[i]
-            momentum_on_body += np.cross(
-                momentum_radius[i], suspensions_force_vector[i])
-
-        force_on_body += mb*external_acceleration  # 添加外部惯性力
-
-        # 6. 计算人体平动与转动响应
-        self.body_acceleration[:3] = force_on_body[:3] / mb
-
-        self.body_acceleration[3:] = np.linalg.solve(
-            self.body_inertia, momentum_on_body)
-        self.body_velocity += self.body_acceleration*dt
+        self.butt_velocity += self.butt_acceleration*dt
         # 在（运动时）座椅中心处坐标系下，人体质心相对于质心初始位置的位移
-        self.body_motion += self.body_velocity*dt
+        self.butt_motion += self.butt_velocity*dt
 
-        # 7. 计算坐垫等效悬架对座椅中心的作用力
-        momentum_radius = buttocks_joints_actual - seat_translation
+        forces_on_seat = -forces_on_butt
 
-        force_on_seat = np.zeros(3, dtype=float)
-        momentum_on_seat = np.zeros(3, dtype=float)
-        for i in range(6):
-            force_on_seat += -suspensions_force_vector[i]
-            momentum_on_seat += np.cross(
-                momentum_radius[i], -suspensions_force_vector[i])
+        return forces_on_seat, external_forces
 
-        return force_on_seat, momentum_on_seat
-
-    def _body_dynamics_with_runge_kutta4(self, seat_motion: np.ndarray, external_acceleration: np.ndarray, dt: float):
+    def _get_cushion_forces(self, seat_motion: np.ndarray, external_acceleration: np.ndarray, dt: float):
         """
-        目的：当输入为座椅运动位移与加速度时，计算人体的动态响应，并返回坐垫对座
-        椅的作用力与力矩。
-        本函数与 self.body_dynamics() 的唯一区别是采用了 runge-kutta 数值积分
-        方法。
+        根据座椅状态与人体屁股状态，计算座垫等效悬架对人体与座椅的作用力。
 
         参数：
             seat_motion: (6,) 数组，在全局坐标系下，座椅中心相对于其初始位置的位
                 移。
-            external_acceleration = [ax, ay, 0]: (3,) 数组，ax 与 ay 表示由于
+            external_acceleration = [ax, ay]: (2,) 数组，ax 与 ay 表示由于
                 车体转向、加/减速等运动导致人体受到的加速度，这些加速度都是水平的，
-                故只有纵向与侧向两个分量。其第 3 个分量为零，是为了计算方便。
+                故只有纵向与侧向两个分量。设外部施加的 z 向加速度为零。
             dt: 采样时间。
 
         返回：
-            force_on_seat: 座椅中心处受到的来自坐垫的力；
-            momentum_on_seat: 座椅中心处受到的来自坐垫的力矩。
-
-        注意：
-            body_motion: 人体质心在（运动的）局部坐标系（车辆坐标系平移至座椅中
-                心处坐标系）下，相对于质心初始位置的位移；也就是说，人体质心先相
-                对于（运动的）座椅处车辆坐标系平移，人体再相对于人体质心旋转（旋
-                转是绝对的）。理解这一点，对于求解屁股中心处位移非常重要。
+            forces_on_butt: (3,) 数组，人体屁股中心处受到的（在 z, phi, theta）
+                方向的力与力矩；
+            external_forces: (3,) 数组，是外部加速度产生的惯性力（作用在质心），而
+                forces_on_butt 包含了将这个力转移到人体屁股中心后产生的力矩。同时，
+                external_forces 还需要返回，以便在更高层的仿真代码中将它们施加到座
+                椅模型上。
         """
 
-        # 保存当前状态，用于 RK4 (K1 评估点)
-        body_motion_current = self.body_motion.copy()
-        body_velocity_current = self.body_velocity.copy()
-        # 复制悬架状态，用于 RK4 步骤中的阻尼计算和最终更新
-        suspensions_stroke_current = self.suspensions_stroke.copy()
+        mb = self.body_mass
+        cb, kb, cr, kr, cp, kp = self.cushion_params
 
-        # 1. 利用 runge-kutta4 计算人体动态响应
-        v1, a1 = self._get_body_state_derivative(
-            seat_motion,
-            body_motion_current,
-            body_velocity_current,
-            external_acceleration,
-            suspensions_stroke_current,
-            dt)
+        # 1. 计算垂向、侧倾与俯仰方向的作用力
+        suspensions_stroke = self.butt_motion - seat_motion[2:5]
+        suspensions_velocity = (suspensions_stroke - self.strokes_previous)/dt
 
-        v2, a2 = self._get_body_state_derivative(
-            seat_motion,
-            body_motion_current + v1*dt/2,
-            body_velocity_current + a1*dt/2,
-            external_acceleration,
-            suspensions_stroke_current,
-            dt/2)
+        forces_on_butt = np.array([kb, kr, kp]) * suspensions_stroke + \
+            np.array([cb, cr, cp]) * suspensions_velocity
 
-        v3, a3 = self._get_body_state_derivative(
-            seat_motion,
-            body_motion_current + v2*dt/2,
-            body_velocity_current + a2*dt/2,
-            external_acceleration,
-            suspensions_stroke_current,
-            dt/2)
+        self.strokes_previous = suspensions_stroke
+        # 2. 计算外部 x, y 方向加速度对人体的力矩（人体外部的力传递至座椅）
+        external_forces = mb * external_acceleration
 
-        v4, a4 = self._get_body_state_derivative(
-            seat_motion,
-            body_motion_current + v3*dt,
-            body_velocity_current + a3*dt,
-            external_acceleration,
-            suspensions_stroke_current,
-            dt)
+        euler_angles = np.hstack((self.butt_motion[1:], seat_motion[-1]))
+        Rb = self._get_rotation_matrix(euler_angles)
+        body_center_local_actual = self.body_center_local @ Rb.T
 
-        self.body_motion += (v1 + 2*v2 + 2*v3 + v4) * dt / 6
-        self.body_velocity += (a1 + 2*a2 + 2*a3 + a4) * dt / 6
+        # 3. 将质心处所受载荷传递至人体屁股中心处
+        forces_on_butt[1:] += np.cross(body_center_local_actual,
+                                       np.append(external_forces, 0))[:2]
 
-        # 2. 重新计算新状态下坐垫等效悬架的行程与方向 （以下内容与 self.body_dynamics 相同）
-        seat_translation = seat_motion[:3]  # 座椅平动位移 (全局)
-        seat_rotation = seat_motion[3:]  # 座椅转动欧拉角 (全局)
+        return forces_on_butt, external_forces
 
-        Rs = self._get_rotation_matrix(seat_rotation)
-        # 计算坐垫下表面铰点（即座椅上的铰点）在（初始）座椅坐标系下的实际位置
-        # 坐垫坐标相对于初始状态时座椅中心
-        cushion_seat_joints_actual = seat_translation + \
-            self.cushion_seat_joints_local @ Rs.T
-
-        # 3. 计算坐垫等效悬架在屁股上的铰点的位置
-        # body_motion 是人体质心相对于（运动时）座椅中心的位移
-        body_translation = self.body_motion[:3]
-        body_rotation = self.body_motion[3:]
-
-        Rb = self._get_rotation_matrix(body_rotation)
-        # 计算坐垫上表面铰点（即屁股下的铰点）在（初始）座椅坐标系下的实际位置
-        buttocks_joints_actual = seat_translation + \
-            self.seat_to_body_local + body_translation + \
-            self.body_to_buttocks_local @ Rb.T + self.buttocks_joints_local @ Rb.T
-
-        # 4. 计算坐垫等效悬架的变形量
-        suspensions_length = np.linalg.norm(
-            buttocks_joints_actual-cushion_seat_joints_actual, axis=1)
-
-        suspensions_stroke_current = suspensions_length - self.cushion_thickness
-        self.suspensions_velocity = (suspensions_stroke_current -
-                                     self.suspensions_stroke) / dt
-        self.suspensions_stroke = suspensions_stroke_current
-
-        # 5. 计算坐垫等效悬架的方向向量
-        suspensions_direction = (
-            buttocks_joints_actual - cushion_seat_joints_actual)
-        suspensions_direction /= suspensions_length[:, np.newaxis]
-
-        # 6. 计算坐垫等效悬架对屁股上铰点的作用力
-        cb, kb = self.cushion_params
-
-        suspensions_force = kb*self.suspensions_stroke + cb*self.suspensions_velocity
-        suspensions_force_vector = suspensions_force[:, np.newaxis] * \
-            suspensions_direction
-        # 删除了与人体有关的动力学计算，因为这部分已经在龙格库塔算法中完成了
-
-        # 7. 计算坐垫等效悬架对座椅中心的作用力
-        momentum_radius = buttocks_joints_actual - seat_translation
-
-        force_on_seat = np.zeros(3, dtype=float)
-        momentum_on_seat = np.zeros(3, dtype=float)
-        for i in range(6):
-            force_on_seat += -suspensions_force_vector[i]
-            momentum_on_seat += np.cross(
-                momentum_radius[i], -suspensions_force_vector[i])
-
-        return force_on_seat, momentum_on_seat
-
-    def _get_body_state_derivative(self, seat_motion: np.ndarray, body_motion: np.ndarray, body_velocity: np.ndarray, external_acceleration: np.ndarray, suspensions_stroke: np.ndarray, dt: float):
+    def _get_butt_acceleration(self, forces_on_butt: np.ndarray):
         """
-        本函数是为了进行龙格-库塔法计算而设计的，其目的是获得当前状态的微分。
+        根据屁股中心的受到的载荷，求屁股中心处在 (z, phi, theta) 方向的加速度。
 
         参数：
-            seat_motion: (6,) 数组；
-            body_motion: (6,) 数组；
-            body_velocity: (6,) 数组；
-            external_accleration: (3,) 数组；
+            forces_on_butt: (3,) 数组，仅包含 (z, phi, theta) 方向分量。
             dt: 采样时间。
-
-        返回：
-            body_velocity: (6,) 数组；
-            body_acceleration: (6,) 数组；
-            suspensions_stroke: (6,) 数组；
-            suspensions_force_vector: (6,3) 数组。
         """
 
-        # 1. 计算坐垫等效悬架在坐椅上的铰点的位置
-        seat_translation = seat_motion[:3]  # 座椅平动位移 (全局)
-        seat_rotation = seat_motion[3:]  # 座椅转动欧拉角 (全局)
-
-        Rs = self._get_rotation_matrix(seat_rotation)
-        # 计算坐垫下表面铰点（即座椅上的铰点）在（初始）座椅坐标系下的实际位置
-        # 坐垫坐标相对于初始状态时座椅中心
-        cushion_seat_joints_actual = seat_translation + \
-            self.cushion_seat_joints_local @ Rs.T
-
-        # 2. 计算坐垫等效悬架在屁股上的铰点的位置
-        # body_motion 是人体质心相对于（运动时）座椅中心的位移
-        body_translation = body_motion[:3]
-        body_rotation = body_motion[3:]
-
-        Rb = self._get_rotation_matrix(body_rotation)
-        # 计算坐垫上表面铰点（即屁股下的铰点）在（初始）座椅坐标系下的实际位置
-        buttocks_joints_actual = seat_translation + \
-            self.seat_to_body_local + body_translation + \
-            self.body_to_buttocks_local @ Rb.T + self.buttocks_joints_local @ Rb.T
-
-        # 3. 计算坐垫等效悬架的变形量
-        suspensions_length = np.linalg.norm(
-            buttocks_joints_actual-cushion_seat_joints_actual, axis=1)
-
-        suspensions_stroke_current = suspensions_length - self.cushion_thickness
-        suspensions_velocity = (suspensions_stroke_current -
-                                suspensions_stroke) / dt
-        suspensions_stroke = suspensions_stroke_current
-
-        # 4. 计算坐垫等效悬架的方向向量
-        suspensions_direction = (
-            buttocks_joints_actual - cushion_seat_joints_actual)
-        suspensions_direction /= suspensions_length[:, np.newaxis]
-
-        # 5. 计算人体受到的力
         mb = self.body_mass
-        cb, kb = self.cushion_params
 
-        suspensions_force = kb*suspensions_stroke + cb*suspensions_velocity
-        suspensions_force_vector = suspensions_force[:, np.newaxis] * \
-            suspensions_direction
+        # 计算人体平动与转动的加速度
+        # 注意：forces_on_butt 前须有负号
+        butt_acceleration = np.zeros(3, dtype=float)
+        butt_acceleration[0] = -forces_on_butt[0] / mb
+        butt_acceleration[1:] = np.linalg.solve(
+            self.butt_inertia[:2, :2], -forces_on_butt[1:])
 
-        # 计算坐垫悬架力作用点相对于（运动时）人体质心的位置矢量
-        momentum_radius = self.body_to_buttocks_local @ Rb.T + \
-            self.buttocks_joints_local @ Rb.T
-
-        force_on_body = np.zeros(3, dtype=float)
-        momentum_on_body = np.zeros(3, dtype=float)
-        for i in range(6):
-            # 将坐垫悬架作用力移动至人体质心处
-            force_on_body += suspensions_force_vector[i]
-            momentum_on_body += np.cross(
-                momentum_radius[i], suspensions_force_vector[i])
-
-        force_on_body += mb*external_acceleration  # 添加外部惯性力
-
-        # 7. 计算人体平动与转动响应
-        body_acceleration = np.zeros(6, dtype=float)
-        body_acceleration[:3] = force_on_body[:3] / mb
-        body_acceleration[3:] = np.linalg.solve(
-            self.body_inertia, momentum_on_body)
-
-        return body_velocity, body_acceleration
+        self.butt_acceleration = butt_acceleration
 
 
 class StewartModel(BodyModel):
@@ -683,8 +474,8 @@ if __name__ == "__main__":
 
     # 信号参数
     frequency = 1.  # 频率(Hz)
-    amplitude = 0.2  # 振幅
-    dt = 0.002  # 采样周期(秒)
+    amplitude = 0.02  # 振幅
+    dt = 0.02  # 采样周期(秒)
     num_samples = 1000  # 采样点数
 
     # 使用采样周期生成时间轴
@@ -693,19 +484,34 @@ if __name__ == "__main__":
     # 生成虚拟的座椅侧倾或俯仰信号
     # 实际中，座椅侧倾或俯仰信号由实验数据给出，替换掉这个数据即可
     signal = amplitude * np.sin(2 * np.pi * frequency * t)
-    base_motion_test = np.vstack((0.*signal,
-                                  0.*signal,
-                                  0.*signal)).T
+    base_motion_test = np.vstack((signal,
+                                  signal,
+                                  signal*0)).T
     base_motion_test = hexa.padding_base_motion_signal(base_motion_test)
     base_motion_test[:, 3:] *= np.pi/180
     logger.debug(f"base = {base_motion_test.shape}")
 
     seat_motion_series = np.zeros_like(base_motion_test)
+    forces = np.zeros((len(signal), 3))
+    moments = np.zeros((len(signal), 3))
 
+    thisbody = hexa.body
+
+    external_acceleration = np.array([0, 0, 0])
     for i in range(len(base_motion_test)):
         logger.debug(f"base_motion = {base_motion_test[i]}")
-        hexa._stewart_seat_dynamics(base_motion_test[i], np.array([0, 0]), dt)
-        seat_motion_series[i] = hexa.seat_motion
+        ft, mt = thisbody._body_dynamics(
+            base_motion_test[i], external_acceleration, dt)
+        seat_motion_series[i] = thisbody.body_motion
+        forces[i] = ft
+        moments[i] = mt
+
+    plt.figure()
+    plt.subplot(2, 1, 1)
+    plt.plot(t, forces)
+    plt.subplot(2, 1, 2)
+    plt.plot(t, moments)
+    plt.show()
 
     plt.figure(figsize=(10, 6))
 
