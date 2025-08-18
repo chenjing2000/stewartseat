@@ -66,7 +66,7 @@ class BodyModel:
         采用 XYZ 顺序旋转 (Roll-Pitch-Yaw)。
 
         参数:
-            euler_angles (np.ndarray): 包含 [roll, pitch, yaw] 的 NumPy 数组 (弧度)。
+            euler_angles: 包含 [roll, pitch, yaw] 的数组 (弧度)。
 
         返回:
             np.ndarray: (3, 3) 旋转矩阵。
@@ -100,7 +100,8 @@ class BodyModel:
         """
         根据铰点半径与角度分布计算其在局部平面下的位置
         """
-        local_position = np.array([[radius*np.cos(x), radius*np.sin(x), 0.0]
+        logger.debug(f"radius = {radius}, angles = {angles}")
+        local_position = np.array([[radius * np.cos(x), radius * np.sin(x), 0.0]
                                   for x in angles])
         return local_position
 
@@ -122,15 +123,17 @@ class BodyModel:
         座椅的作用力与力矩。
 
         参数：
-            seat_motion: (6,) 数组，在全局坐标系下，座椅中心相对于其初始位置的位
-                移。
+            seat_motion: (6,) 数组，在全局坐标系下，座椅中心相对于其初始位置
+                的位移。
             external_acceleration = [ax, ay]: (2,) 数组，ax 与 ay 表示由于
-                车体转向、加/减速等运动导致人体受到的加速度，这些加速度都是水平的，
-                故只有纵向与侧向两个分量。惯性载荷的 z 向分量为零，故仅考虑 x, y。
+                车体转向、加/减速等运动导致人体受到的加速度，这些加速度都是水
+                平的，故只有纵向与侧向两个分量。惯性载荷的 z 向分量为零，故仅
+                考虑 x, y。
             dt: 采样时间。
 
         返回：
-            force_on_seat: 座椅中心处受到的来自坐垫的力，仅包含 (z, phi, theta) 方向分量；
+            force_on_seat: 座椅中心处受到的来自坐垫的力，仅包含 
+                (z, phi, theta) 方向分量；
             external_forces: 人体对座椅在 x, y 方向的惯性力。
         """
 
@@ -152,20 +155,20 @@ class BodyModel:
         根据座椅状态与人体屁股状态，计算座垫等效悬架对人体与座椅的作用力。
 
         参数：
-            seat_motion: (6,) 数组，在全局坐标系下，座椅中心相对于其初始位置的位
-                移。
+            seat_motion: (6,) 数组，在全局坐标系下，座椅中心相对于其初始位置
+                的位移。
             external_acceleration = [ax, ay]: (2,) 数组，ax 与 ay 表示由于
-                车体转向、加/减速等运动导致人体受到的加速度，这些加速度都是水平的，
-                故只有纵向与侧向两个分量。设外部施加的 z 向加速度为零。
+                车体转向、加/减速等运动导致人体受到的加速度，这些加速度都是水
+                平的，故只有纵向与侧向两个分量。设外部施加的 z 向加速度为零。
             dt: 采样时间。
 
         返回：
-            forces_on_butt: (3,) 数组，人体屁股中心处受到的（在 z, phi, theta）
-                方向的力与力矩；
-            external_forces: (3,) 数组，是外部加速度产生的惯性力（作用在质心），而
-                forces_on_butt 包含了将这个力转移到人体屁股中心后产生的力矩。同时，
-                external_forces 还需要返回，以便在更高层的仿真代码中将它们施加到座
-                椅模型上。
+            forces_on_butt: (3,) 数组，人体屁股中心处受到的（在 z, phi, 
+                theta）方向的力与力矩；
+            external_forces: (3,) 数组，是外部加速度产生的惯性力（作用在质
+                心），而 forces_on_butt 包含了将这个力转移到人体屁股中心后产
+                生的力矩。同时，external_forces 还需要返回，以便在更高层的
+                仿真代码中将它们施加到座椅模型上。
         """
 
         mb = self.body_mass
@@ -216,9 +219,9 @@ class BodyModel:
 class StewartModel(BodyModel):
 
     def __init__(self, base_radius: float = BASE_RADIUS,
-                 base_joints_angle: list[int] = BASE_JOINTS_ANGLE,
+                 base_joints_angle: list[float] = BASE_JOINTS_ANGLE,
                  seat_radius: float = SEAT_RADIUS,
-                 seat_joints_angle: list[int] = SEAT_JOINTS_ANGLE,
+                 seat_joints_angle: list[float] = SEAT_JOINTS_ANGLE,
                  seat_center_height: float = SEAT_CENTER_HEIGHT,
                  seat_mass: float = SEAT_MASS,
                  seat_params: list[float] = SEAT_PARAMS,
@@ -226,6 +229,8 @@ class StewartModel(BodyModel):
                  stroke_limits: list[float] = STROKE_LIMITS,
                  motion_limits: list[list[float]] = MOTION_LIMITS,
                  max_accelerations: list[float] = MAX_ACCELERATIONS,
+                 body_mass: float = BODY_MASS,
+                 body_inertia: list[float] = BODY_INERTIA
                  ):
         """
         假设：全局坐标系是将车辆坐标系平移至底座中心点的坐标系，与初始状态下的
@@ -244,7 +249,7 @@ class StewartModel(BodyModel):
 
         坐标 (x, y, z, phi, theta, psi) 均相对于刚定义的全局坐标系，都不是相
         对于地面绝对坐标系。其中，默认全局坐标系与底座初始状态时的底座中心坐标
-        系重合，且底座不会相对于该坐标系发生 (x, y， psi) 移动，即底座总是有 
+        系重合，且底座不会相对于该坐标系发生 (x, y, psi) 移动，即底座总是有 
         (x = 0, y = 0, psi = 0)（即使在车辆运动时），但底座中心的其它坐标是可
         以运动的。
 
@@ -268,16 +273,14 @@ class StewartModel(BodyModel):
             stroke_limits (list): 悬架的行程限制 [min_stroke, max_stroke] (m)。
             body_center_height (float): 集中质量质心相对于座椅中心的高度 (m)。
         """
-        self.body = BodyModel()
 
         self.base_radius = base_radius
-        self.base_joints_angle = np.array(
-            [np.radians(x) for x in base_joints_angle])
+        self.base_joints_angle = np.array(base_joints_angle, dtype=float)
 
         # 座椅参数
         self.seat_radius = seat_radius
-        self.seat_joints_angle = np.array(
-            [np.radians(x) for x in seat_joints_angle])
+        self.seat_joints_angle = np.array(seat_joints_angle, dtype=float)
+
         self.seat_center_height = seat_center_height
         self.seat_mass = seat_mass
         self.seat_params = np.array(seat_params)
@@ -287,6 +290,9 @@ class StewartModel(BodyModel):
 
         self.motion_limits = np.array(motion_limits)
         self.max_accelerations = np.array(max_accelerations)
+
+        self.body_mass = body_mass
+        self.body_inertia = np.array(body_inertia, dtype=float)
 
         self.base_joints_local = BodyModel._get_joints_local_position(
             self.base_radius, self.base_joints_angle)
@@ -304,32 +310,30 @@ class StewartModel(BodyModel):
         self.seat_joints_actual = self.seat_joints_local + \
             self.seat_center_actual
 
-        self.seat_acceleration = np.zeros(6, dtype=float)
-        self.seat_velocity = np.zeros(6, dtype=float)
         # 全局坐标系下，座椅中心相对于其初始位置的位移量
         self.seat_motion = np.zeros(6, dtype=float)
+        self.seat_velocity = np.zeros(6, dtype=float)
+        self.seat_acceleration = np.zeros(6, dtype=float)
 
         # 默认 6 个悬架的初始长度都是相等的。
-        base_joints_to_seat_joints = self.seat_center_local + \
+        suspensions_vector = self.seat_center_local + \
             self.seat_joints_local - self.base_joints_local
-        self.suspensions_length_nominal = np.linalg.norm(
-            base_joints_to_seat_joints[0])
 
-        # 当前的悬架状态
-        self.suspensions_direction = base_joints_to_seat_joints
-        self.suspensions_direction /= np.linalg.norm(
-            self.suspensions_direction, axis=1)[:, np.newaxis]
+        suspensions_length = np.linalg.norm(suspensions_vector, axis=1)
+        self.suspensions_length_nominal = suspensions_length[0]
+        self.suspensions_direction = suspensions_vector / \
+            suspensions_length[:, np.newaxis]
         self.suspensions_stroke = np.zeros(6, dtype=float)
         self.suspensions_velocity = np.zeros(6, dtype=float)
 
     def padding_base_motion_signal(self, base_motion: np.ndarray) -> np.ndarray:
         """
-        目的：将输入信号的维度由 3 维的转换为 6 维，以便于后续计算。
-        这个函数应该在仿真开始前处理一次数据，而不是在每次迭代中调用。
+        目的：将输入信号的维度由 3 维的转换为 6 维，以便于后续计算。这个函数
+            应该在仿真开始前处理一次数据，而不是在每次迭代中调用。
         在 if __name__ == "__main__": 块中调用是正确的做法。
 
         参数：
-        base_motion: (N, 3) 数组，或 (N, 6) 数组。如果是 (N, 3)，表示 [z, roll, pitch]。
+            base_motion: (N, 3) 数组，或 (N, 6) 数组。如果是 (N, 3)，表示 [z, roll, pitch]。
 
         返回：
             base_motion_padded: (N, 6) 数组，表示 [x, y, z, roll, pitch, yaw]。
@@ -349,34 +353,65 @@ class StewartModel(BodyModel):
 
         return base_motion_padded
 
-    def _stewart_seat_dynamics(self, base_motion: np.ndarray, external_acceleration: np.ndarray, dt: float):
+    def _stewart_seat_dynamics(self, base_motion: np.ndarray, external_acceleration: np.ndarray, forces_on_seat_from_body: np.ndarray, external_forces_from_body: np.ndarray, dt: float):
         """
-        根据座椅和底座的位姿信息，计算悬架变形量及端点间相对速度，为下一步计算悬
-        架对座椅的支撑力打下基础。
+        根据座椅和底座的位姿信息，计算悬架变形量及端点间相对速度，为下一步计算
+        悬架对座椅的支撑力打下基础。
 
         参数:
-            base_motion (np.ndarray): (3,) 数组，底座在全局坐标系下的 
-            (z, roll, pitch) 位移量，因为 (x, y, psi) 是假设为零的，故忽略。
-            external_acceleration = [ax, ay]: (2,) 数组，表示由于车体转向、加/
-            减速等运动导致人体受到的加速度，这些加速度都是水平的，故只有纵向与
-            侧向两个分量。
+            base_motion (np.ndarray): (3,) 数组，底座在全局坐标系下的  
+                (z, roll, pitch) 位移量，因为 (x, y, psi) 是假设为零的，故
+                忽略。
+            external_acceleration = [ax, ay]: (2,) 数组，表示由于车体转向、
+                加减速等运动导致人体受到的加速度，这些加速度都是水平的，故只有
+                纵向与侧向两个分量。
             dt: 采样周期。
         """
-        # 增加 z 向加速度分量，将加速度改为 (3,) 数组，以简化计算
-        if (len(external_acceleration) == 2):
-            external_acceleration = np.pad(
-                external_acceleration, (0, 1), 'constant')
-        else:
-            logger.error(
-                "External_acceleration has only 2 components in x, y directions.\n")
 
-        base_translation = base_motion[:3]
-        base_rotation = base_motion[3:]  # 底座的 roll-pitch-yaw
+        forces_on_seat = self._get_suspensions_forces(base_motion, dt)
+
+        # 注意符号
+        forces_on_seat[:2] += external_forces_from_body
+        forces_on_seat[2] += -forces_on_seat_from_body[0]
+        forces_on_seat[3:5] += -forces_on_seat_from_body[1:]
+
+        mb = self.body_mass
+        ms = self.seat_mass
+        forces_on_seat[:2] += ms*external_acceleration  # 添加外部加速度载荷
+
+        # 7. 计算座椅平动与转动响应
+        self.seat_acceleration[:2] = forces_on_seat[:2] / (ms + mb)
+        self.seat_acceleration[2] = forces_on_seat[2] / ms
+
+        self.seat_acceleration[3:5] = np.linalg.solve(
+            self.seat_inertia[:2, :2], forces_on_seat[3:5])
+        self.seat_acceleration[-1] = forces_on_seat[-1] / \
+            (self.seat_inertia[2, 2] + self.body_inertia[2, 2])
+
+        self.seat_velocity += self.seat_acceleration*dt
+        # 更新座椅中心的位置
+        self.seat_motion += self.seat_velocity*dt
+
+    def _get_suspensions_forces(self, base_motion: np.ndarray, dt: float):
+        """
+        根据座椅和底座的位姿信息，计算座椅悬架对座椅的作用力。
+
+        参数:
+            base_motion: (3,) 数组，底座在全局坐标系下的位移量，由于全局坐标
+            系固定在底座上，其 x, y, yaw 分量均为零，故其仅含 z, roll, pitch
+            分量。
+            dt: 采样周期。
+
+        返回：
+            forces_on_seat: (6,) 数组，座椅中心受到的力与力矩。
+        """
+
+        base_translation = np.array([0, 0, base_motion[0]])
+        base_rotation = np.append(base_motion[1:], 0)  # 底座的 roll-pitch-yaw
 
         seat_translation = self.seat_motion[:3]
         seat_rotation = self.seat_motion[3:]
-        logger.debug(
-            f"base_m = {base_motion}, seat_m = {self.seat_motion}")
+
         # 1. 获取座椅铰点的位置
         Rs = BodyModel._get_rotation_matrix(seat_rotation)
 
@@ -389,92 +424,55 @@ class StewartModel(BodyModel):
         self.base_joints_actual = base_translation + self.base_joints_local @ Rb.T
 
         # 3. 计算悬架长度
-        suspensions_length = np.linalg.norm(
-            self.seat_joints_actual - self.base_joints_actual, axis=1)
+        suspensions_vector = self.seat_joints_actual - self.base_joints_actual
+        suspensions_length = np.linalg.norm(suspensions_vector, axis=1)
+        logger.debug(f"suspension length : {suspensions_length}")
+        suspensions_direction = suspensions_vector / \
+            suspensions_length[:, np.newaxis]
 
         # 4. 获取悬架伸长量和端点间相对速度
-        suspensions_stroke_current = suspensions_length - self.suspensions_length_nominal
+        suspensions_stroke_current = suspensions_length - \
+            self.suspensions_length_nominal
         self.suspensions_velocity = (
-            suspensions_stroke_current-self.suspensions_stroke) / dt
+            suspensions_stroke_current - self.suspensions_stroke) / dt
         self.suspensions_stroke = suspensions_stroke_current
 
         # 5. 计算悬架的方向向量
-        suspensions_direction = (
-            self.seat_joints_actual - self.base_joints_actual)
-        self.suspensions_direction /= np.linalg.norm(
-            suspensions_direction, axis=1)[:, np.newaxis]
+        # suspensions_direction = (
+        #     self.seat_joints_actual - self.base_joints_actual)
+        # # logger.debug(f"suspenions length = {suspensions_length}")
+        # self.suspensions_direction /= np.linalg.norm(
+        #     suspensions_direction, axis=1)[:, np.newaxis]
 
         # 6. 计算座椅受到的力
-        ms = self.seat_mass
         cs, ks = self.seat_params
 
-        suspension_force = ks*self.suspensions_stroke+cs*self.suspensions_velocity
+        suspension_force = ks*self.suspensions_stroke + cs*self.suspensions_velocity
         suspension_force_vector = np.zeros((6, 3), dtype=float)
 
         # 计算座椅悬架力作用点相对于（运动时）座椅中心的位置矢量
         momentum_radius = self.seat_joints_local @ Rs.T
 
-        force_on_seat = np.zeros(3, dtype=float)
-        momentum_on_seat = np.zeros(3, dtype=float)
+        forces_on_seat = np.zeros(6, dtype=float)
 
-        for i in range(6):
-            suspension_force_vector[i] = suspension_force[i] * \
-                suspensions_direction[i]
-            # 将座椅悬架作用力移动至座椅质心处
-            force_on_seat += suspension_force_vector[i]
-            momentum_on_seat += np.cross(
-                momentum_radius[i], suspension_force_vector[i])
-        logger.debug(f"momentum_on_seat = {momentum_on_seat}")
-        force_on_seat_from_body, momentum_on_seat_from_body = self.body._body_dynamics(
-            self.seat_motion, external_acceleration, dt)
-        logger.debug(f"force_on_seat = {force_on_seat_from_body}")
-        logger.debug(f"momentum_on_seat_body = {momentum_on_seat_from_body}")
+        for id in range(6):
+            suspension_force_vector[id] = suspension_force[id] * \
+                suspensions_direction[id]
+            # 悬架伸长时对座椅有向下的力，故须增加负号
+            forces_on_seat[:3] += -suspension_force_vector[id]
+            forces_on_seat[3:] += np.cross(
+                momentum_radius[id], -suspension_force_vector[id])
 
-        # force_on_seat += force_on_seat_from_body
-        # momentum_on_seat += momentum_on_seat_from_body
-
-        force_on_seat += ms*external_acceleration  # 添加外部加速度载荷
-
-        # 7. 计算座椅平动与转动响应
-        self.seat_acceleration[:3] = force_on_seat[:3] / ms
-
-        self.seat_acceleration[3:] = np.linalg.solve(
-            self.seat_inertia, momentum_on_seat)
-        self.seat_velocity += self.seat_acceleration*dt
-        # 更新座椅中心的位置
-        self.seat_motion += self.seat_velocity*dt
-
-    def is_valid_suspensions_length(self, lengths: np.ndarray) -> np.bool_:
-        """
-        检查计算出的悬架长度是否在允许的行程范围内。
-
-        参数:
-            lengths (np.ndarray): (6,) 数组，悬架的当前长度。
-
-        返回:
-            bool: 如果所有长度都在有效范围内则为 True，否则为 False。
-        """
-        min_length, max_length = self.suspensions_length_nominal + self.stroke_limits
-        is_valid = np.all((lengths >= min_length) & (lengths <= max_length))
-        return is_valid
-
-    def reset_platform(self):
-        """
-        重置座椅状态，将座椅连接点和底座连接点的位置恢复到初始状态。
-        """
-        self._initialize_joints_position()
+        return forces_on_seat
 
 
-if __name__ == "__main__":
+if __name__ == "__mainx__":
 
-    import matplotlib.pyplot as plt
-
-    # 初始化一个对象，用于座椅侧倾或俯仰控制测试
-    hexa = StewartModel()
+    body = BodyModel()
 
     # 信号参数
     frequency = 1.  # 频率(Hz)
-    amplitude = 0.02  # 振幅
+    amplitude = 0.1  # 振幅
     dt = 0.02  # 采样周期(秒)
     num_samples = 1000  # 采样点数
 
@@ -484,131 +482,113 @@ if __name__ == "__main__":
     # 生成虚拟的座椅侧倾或俯仰信号
     # 实际中，座椅侧倾或俯仰信号由实验数据给出，替换掉这个数据即可
     signal = amplitude * np.sin(2 * np.pi * frequency * t)
-    base_motion_test = np.vstack((signal,
-                                  signal,
-                                  signal*0)).T
-    base_motion_test = hexa.padding_base_motion_signal(base_motion_test)
-    base_motion_test[:, 3:] *= np.pi/180
-    logger.debug(f"base = {base_motion_test.shape}")
+    seat_motion = np.vstack((np.zeros(len(t), dtype=float),
+                            np.zeros(len(t), dtype=float),
+                            0.1*signal,
+                            0.1*signal,
+                            0.2*signal,
+                            np.zeros(len(t), dtype=float))).T
+    # seat_motion[0, [0, 1, 5]] = np.array([0.1, -0.1, -0.01])
 
-    seat_motion_series = np.zeros_like(base_motion_test)
+    butt_motion_series = np.zeros((num_samples, 3), dtype=float)
+    butt_velocity_series = np.zeros((num_samples, 3), dtype=float)
+    butt_acceleration_series = np.zeros((num_samples, 3), dtype=float)
+
+    for id in range(num_samples):
+        forces_on_seat, external_forces = body._body_dynamics(
+            seat_motion[id], np.zeros(2, dtype=float), dt)
+        butt_motion_series[id] = body.butt_motion
+        butt_velocity_series[id] = body.butt_velocity
+        butt_acceleration_series[id] = body.butt_acceleration
+
+    plt.figure()
+
+    plt.subplot(3, 1, 1)
+    plt.plot(t, butt_acceleration_series)
+
+    plt.subplot(3, 1, 2)
+    plt.plot(t, butt_velocity_series)
+
+    plt.subplot(3, 1, 3)
+    plt.plot(t, butt_motion_series)
+
+    plt.show()
+
+
+if __name__ == "__main__":
+
+    import matplotlib.pyplot as plt
+
+    # 信号参数
+    frequency = 1.  # 频率(Hz)
+    amplitude = 0.02  # 振幅
+    dt = 0.02  # 采样周期(秒)
+    num_samples = 10000  # 采样点数
+
+    # 使用采样周期生成时间轴
+    t = np.arange(0, num_samples) * dt
+
+    # 生成虚拟的座椅侧倾或俯仰信号
+    # 实际中，座椅侧倾或俯仰信号由实验数据给出，替换掉这个数据即可
+    signal = amplitude * np.sin(2 * np.pi * frequency * t)
+    base_motion_test = np.vstack((signal,
+                                  signal*0,
+                                  signal*0)).T
+
+    logger.debug(f"base shape = {base_motion_test.shape}")
+
+    # 初始化一个对象，用于座椅侧倾或俯仰控制测试
+    hexa = StewartModel()
+    body = BodyModel()
+
+    seat_motion_series = np.zeros((num_samples, 6), dtype=float)
+    seat_velocity_series = np.zeros((num_samples, 6), dtype=float)
+    seat_acceleration_series = np.zeros((num_samples, 6), dtype=float)
+
     forces = np.zeros((len(signal), 3))
     moments = np.zeros((len(signal), 3))
 
-    thisbody = hexa.body
+    butt_motion_series = np.zeros((num_samples, 3), dtype=float)
+    butt_velocity_series = np.zeros((num_samples, 3), dtype=float)
+    butt_acceleration_series = np.zeros((num_samples, 3), dtype=float)
 
-    external_acceleration = np.array([0, 0, 0])
-    for i in range(len(base_motion_test)):
-        logger.debug(f"base_motion = {base_motion_test[i]}")
-        ft, mt = thisbody._body_dynamics(
-            base_motion_test[i], external_acceleration, dt)
-        seat_motion_series[i] = thisbody.body_motion
-        forces[i] = ft
-        moments[i] = mt
-
-    plt.figure()
-    plt.subplot(2, 1, 1)
-    plt.plot(t, forces)
-    plt.subplot(2, 1, 2)
-    plt.plot(t, moments)
-    plt.show()
+    external_acceleration = np.array([0, 0])
+    ft = np.zeros(3, dtype=float)
+    fext = np.zeros(2, dtype=float)
+    for id in range(len(base_motion_test)):
+        hexa._stewart_seat_dynamics(
+            base_motion_test[id], external_acceleration, ft, fext, dt)
+        seat_motion_series[id] = hexa.seat_motion
 
     plt.figure(figsize=(10, 6))
 
     plt.subplot(2, 3, 1)
-    plt.plot(t, base_motion_test[:, 0], 'b-', label='x base')
+    # plt.plot(t, base_motion_test[:, 0], 'b-', label='x base')
     plt.plot(t, seat_motion_series[:, 0], 'r-', label='x seat')
     plt.legend()
 
     plt.subplot(2, 3, 2)
-    plt.plot(t, base_motion_test[:, 1], 'b-', label='y base')
+    # plt.plot(t, base_motion_test[:, 1], 'b-', label='y base')
     plt.plot(t, seat_motion_series[:, 1], 'r-', label='y seat')
     plt.legend()
 
     plt.subplot(2, 3, 3)
-    plt.plot(t, base_motion_test[:, 2], 'b-', label='z base')
+    plt.plot(t, base_motion_test[:, 0], 'b-', label='z base')
     plt.plot(t, seat_motion_series[:, 2], 'r-', label='z seat')
     plt.legend()
 
     plt.subplot(2, 3, 4)
-    plt.plot(t, base_motion_test[:, 3], 'b-', label='roll base')
+    plt.plot(t, base_motion_test[:, 1], 'b-', label='roll base')
     plt.plot(t, seat_motion_series[:, 3], 'r-', label='roll seat')
     plt.legend()
 
     plt.subplot(2, 3, 5)
-    plt.plot(t, base_motion_test[:, 4], 'b-', label='pitch base')
+    plt.plot(t, base_motion_test[:, 2], 'b-', label='pitch base')
     plt.plot(t, seat_motion_series[:, 4], 'r-', label='pitch seat')
     plt.legend()
 
     plt.subplot(2, 3, 6)
-    plt.plot(t, base_motion_test[:, 5], 'b-', label='yaw base')
-    plt.plot(t, seat_motion_series[:, 5], 'r-', label='yaw seat')
-    plt.legend()
-
-    plt.legend()
-    plt.grid(True)
-    plt.show()
-
-if __name__ == "__mainx__":
-    import pandas as pd
-    import matplotlib.pyplot as plt
-
-    # 初始化一个对象，用于平台侧倾或俯仰控制测试
-    hexa = StewartModel()
-
-    # 使用Pandas读取CSV文件
-    df = pd.read_csv("C:\\pycheche\\testStewartPlatform\\beamng_acc_cleaned_osim_lp03_resample.csv",
-                     skiprows=0, header=0)
-
-    # 获取列名(不包含第一行标题)
-    columns = df.columns
-
-    # 提取时间列和数据列
-    t = df[columns[0]].values.astype(float)
-    base_motion_test = df[columns[3:6]].values.astype(float)
-    base_motion_test = hexa.padding_base_motion_signal(base_motion_test)
-    base_motion_test[:, 3:] *= np.pi/180
-    logger.debug(f"base = {base_motion_test.shape}")
-    dt = 0.02
-
-    seat_motion_series = np.zeros_like(base_motion_test)
-    body_motion_series = np.zeros_like(base_motion_test)
-
-    for i in range(len(base_motion_test)):
-        logger.debug(f"base_motion = {base_motion_test[i]}")
-        # hexa.body._body_dynamics(base_motion_test[i], np.array([0, 0, 0]))
-        hexa.body._body_dynamics_with_runge_kutta4(
-            base_motion_test[i], np.array([0, 0, 0,]), dt)
-
-    plt.figure(figsize=(10, 6))
-
-    plt.subplot(2, 3, 1)
-    plt.plot(t, base_motion_test[:, 0], 'b-', label='x base')
-    plt.plot(t, seat_motion_series[:, 0], 'r-', label='x seat')
-    plt.legend()
-
-    plt.subplot(2, 3, 2)
-    plt.plot(t, base_motion_test[:, 1], 'b-', label='y base')
-    plt.plot(t, seat_motion_series[:, 1], 'r-', label='y seat')
-    plt.legend()
-
-    plt.subplot(2, 3, 3)
-    plt.plot(t, base_motion_test[:, 2], 'b-', label='z base')
-    plt.plot(t, seat_motion_series[:, 2], 'r-', label='z seat')
-    plt.legend()
-
-    plt.subplot(2, 3, 4)
-    plt.plot(t, base_motion_test[:, 3], 'b-', label='roll base')
-    plt.plot(t, seat_motion_series[:, 3], 'r-', label='roll seat')
-    plt.legend()
-
-    plt.subplot(2, 3, 5)
-    plt.plot(t, base_motion_test[:, 4], 'b-', label='pitch base')
-    plt.plot(t, seat_motion_series[:, 4], 'r-', label='pitch seat')
-    plt.legend()
-
-    plt.subplot(2, 3, 6)
-    plt.plot(t, base_motion_test[:, 5], 'b-', label='yaw base')
+    # plt.plot(t, base_motion_test[:, 5], 'b-', label='yaw base')
     plt.plot(t, seat_motion_series[:, 5], 'r-', label='yaw seat')
     plt.legend()
 
