@@ -418,10 +418,8 @@ class StewartModel(BodyModel):
 
             # 悬架伸长时对座椅有向下的力，故须增加负号
             forces_on_seat[0] += -suspensions_force_vector[id, 2]
-            force_for_momentum = np.array(
-                [0, 0, -suspensions_force_vector[id, 2]])
             forces_on_seat[1:] += np.cross(
-                momentum_radius[id], force_for_momentum)[:2]
+                momentum_radius[id], -suspensions_force_vector[id])[:2]
 
         return forces_on_seat
 
