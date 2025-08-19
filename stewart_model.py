@@ -140,7 +140,12 @@ class BodyModel:
         forces_on_butt, external_forces = \
             self._get_cushion_forces(seat_motion, external_acceleration, dt)
 
-        self._get_butt_acceleration(forces_on_butt)
+        mb = self.body_mass
+
+        # 注意：forces_on_butt 前须有负号
+        self.butt_acceleration[0] = -forces_on_butt[0] / mb
+        self.butt_acceleration[1:] = np.linalg.solve(
+            self.butt_inertia[:2, :2], -forces_on_butt[1:])
 
         self.butt_velocity += self.butt_acceleration*dt
         # 在（运动时）座椅中心处坐标系下，人体质心相对于质心初始位置的位移
@@ -195,26 +200,6 @@ class BodyModel:
 
         return forces_on_butt, external_forces
 
-    def _get_butt_acceleration(self, forces_on_butt: np.ndarray):
-        """
-        根据屁股中心的受到的载荷，求屁股中心处在 (z, phi, theta) 方向的加速度。
-
-        参数：
-            forces_on_butt: (3,) 数组，仅包含 (z, phi, theta) 方向分量。
-            dt: 采样时间。
-        """
-
-        mb = self.body_mass
-
-        # 计算人体平动与转动的加速度
-        # 注意：forces_on_butt 前须有负号
-        butt_acceleration = np.zeros(3, dtype=float)
-        butt_acceleration[0] = -forces_on_butt[0] / mb
-        butt_acceleration[1:] = np.linalg.solve(
-            self.butt_inertia[:2, :2], -forces_on_butt[1:])
-
-        self.butt_acceleration = butt_acceleration
-
 
 class StewartModel(BodyModel):
 
@@ -225,12 +210,7 @@ class StewartModel(BodyModel):
                  seat_center_height: float = SEAT_CENTER_HEIGHT,
                  seat_mass: float = SEAT_MASS,
                  seat_params: list[float] = SEAT_PARAMS,
-                 seat_inertia: list[list[float]] = SEAT_INERTIA,
-                 stroke_limits: list[float] = STROKE_LIMITS,
-                 motion_limits: list[list[float]] = MOTION_LIMITS,
-                 max_accelerations: list[float] = MAX_ACCELERATIONS,
-                 body_mass: float = BODY_MASS,
-                 body_inertia: list[float] = BODY_INERTIA
+                 seat_inertia: list[list[float]] = SEAT_INERTIA
                  ):
         """
         假设：全局坐标系是将车辆坐标系平移至底座中心点的坐标系，与初始状态下的
@@ -424,7 +404,9 @@ class StewartModel(BodyModel):
         return forces_on_seat
 
 
-if __name__ == "__mainx__":
+if __name__ == "__main__":
+
+    import matplotlib.pyplot as plt
 
     body = BodyModel()
 
