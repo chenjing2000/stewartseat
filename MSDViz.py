@@ -10,7 +10,9 @@ from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtGui import QPalette, QColor, QDoubleValidator
 from PySide6.QtCore import QTimer, Signal
 from OpenGL.GL import *
+
 import numpy as np
+import control as ct
 
 from MSDModel import MSDPlant, PIDController
 
@@ -27,10 +29,8 @@ class MassSpringDamperGL(QOpenGLWidget):
         # positions
         self.mass_position_init = 60
         self.mass_motion = 0.0  # state or response
-        self.mass_position_actual = self.mass_position_init + self.mass_motion
         self.base_position_init = 0
         self.base_motion = 0.0  # excitation or external input
-        self.base_position_actual = self.base_position_init + self.base_motion
 
         # joints geometry
         self.joints_position = np.array([-15, 0, 15])
@@ -39,38 +39,52 @@ class MassSpringDamperGL(QOpenGLWidget):
         self.base_width = 50
 
         # mass geometry
-        self.mass_width = 40
         self.mass_height = 20
-
-        self.upper_joint_position = self.mass_position_actual
-        self.lower_joint_position = self.base_position_actual
-
-        self.suspension_stroke = self.upper_joint_position - self.lower_joint_position
+        self.mass_width = 40
 
         # spring geometry
-        x_spring = self.joints_position[1]
-        self.spring_joint_b = np.array([x_spring, self.upper_joint_position])
-        self.spring_joint_a = np.array([x_spring, self.lower_joint_position])
         self.spring_coils = 11
         self.spring_width = 10
 
         # damper geometry
-        x_damper = self.joints_position[0]
-        self.damper_joint_b = np.array([x_damper, self.upper_joint_position])
-        self.damper_joint_a = np.array([x_damper, self.lower_joint_position])
         self.damper_height = 20
         self.damper_width = 10
         self.damper_thickness = 10
 
         # actuator geometry
-        x_actuator = self.joints_position[2]
-        self.actuator_joint_b = np.array(
-            [x_actuator, self.upper_joint_position])
-        self.actuator_joint_a = np.array(
-            [x_actuator, self.lower_joint_position])
         self.actuator_radius = 6
 
+        # VBO/VAO IDs
+        self.mass_vao = None
+        self.mass_vbo = None
+
+        self.base_vao = None
+        self.base_vbo = None
+
+        self.spring.vao = None
+        self.spring.vbo = None
+
+        self.damper.vao = None
+        self.damper.vbo = None
+
+        self.actuator.vao = None
+        self.actuator.vbo = None
+
+    def initializeGL(self):
+
+        glClearColor(0.08, 0.09, 0.11, 1.0)
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+
+        self.mass_vao = glGenVertexArrays(1)
+        self.mass_vbo = glGenBuffers(1)
+
+        glBindVertexArray(self.mass_vao)
+        glBindBuffer(GL_ARRAY_BUFFER, self.mass_vbo)
+        glBufferData(GL_ARRAY_BUFFER, sizeof())
+
     def update_positions(self, x_mass, x_base):
+
         self.mass_motion = x_mass * self.meter_to_screen
         self.mass_position_actual = self.mass_position_init + \
             self.mass_motion
@@ -83,94 +97,65 @@ class MassSpringDamperGL(QOpenGLWidget):
 
         self.suspension_stroke = self.upper_joint_position - self.lower_joint_position
 
-        # spring geometry
-        x_spring = self.joints_position[1]
-        self.spring_joint_b = np.array(
-            [x_spring, self.upper_joint_position])
-        self.spring_joint_a = np.array(
-            [x_spring, self.lower_joint_position])
+        self.get_mass_vbo()
+        self.get_spring_vbo()
+        self.get_damper_vbo()
+        self.get_actuator_vbo()
+        self.get_dashed_vbo()
 
-        # damper geometry
-        x_damper = self.joints_position[0]
-        self.damper_joint_b = np.array(
-            [x_damper, self.upper_joint_position])
-        self.damper_joint_a = np.array(
-            [x_damper, self.lower_joint_position])
-
-        # actuator geometry
-        x_actuator = self.joints_position[2]
-        self.actuator_joint_b = np.array(
-            [x_actuator, self.upper_joint_position])
-        self.actuator_joint_a = np.array(
-            [x_actuator, self.lower_joint_position])
-
-    def initializeGL(self):
-        glClearColor(0.08, 0.09, 0.11, 1.0)
-        glEnable(GL_BLEND)
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
-
-    def resizeGL(self, w, h):
-        glViewport(0, -300, w, h)
-        glMatrixMode(GL_PROJECTION)
-        glLoadIdentity()
-        glOrtho(-90, 90, -40, 140, -1, 1)  # Set up a 2D projection
-        glMatrixMode(GL_MODELVIEW)
-        glLoadIdentity()
+        self.update()
 
     def paintGL(self):
         glClear(GL_COLOR_BUFFER_BIT)
         glLoadIdentity()
 
-        # Draw ground
-        wb = self.base_width
-        glColor3f(0.5, 0.5, 0.5)
+        # 绘制质量块
+        glColor3f(0.5, 0.5, 0.6)
         glLineWidth(2.0)
-        glBegin(GL_LINES)
-        glVertex2f(-wb/2, self.base_position_actual)
-        glVertex2f(+wb/2, self.base_position_actual)
-        glEnd()
 
-        # Draw mass block
-        self.draw_mass()
-        self.draw_spring()
-        self.draw_damper()
+        glBindVertexArray(self.mass_vao)
+        glDrawArrays(GL_QUADS, 0, 4)
+        glBindVertexArray(0)
 
-        # Draw controller symbol (circle with arrow)
-        self.draw_actuator()
+        # 绘制弹簧
+        glColor3f(0.8, 0.4, 0.1)  # Orange-brown
+        glLineWidth(2.0)
 
-        # Draw datum lines
-        self.draw_dashed_lines()
+        glBindVertexArray()
+        glDrawArrays(GL_QUADS, 0, 4)
+        glBindVertexArray(0)
 
-    def draw_mass(self):
-
+    def get_mass_vbo(self):
+        # mass geometry
         y_mass = self.mass_position_actual
         w = self.mass_width
         h = self.mass_height
 
-        glColor3f(0.5, 0.5, 0.5)
-        glLineWidth(2.0)
-        glBegin(GL_QUADS)
-        glVertex2f(-w/2, y_mass)
-        glVertex2f(-w/2, y_mass + h)
-        glVertex2f(+w/2, y_mass + h)
-        glVertex2f(+w/2, y_mass)
-        glEnd()
+        mass_vertices = np.array([-w/2, y_mass,
+                                  -w/2, y_mass + h,
+                                  +w/2, y_mass + h,
+                                  +w/2, y_mass
+                                  ], dtype=np.float32)
 
-    def draw_spring(self):
+        # 使用 glBufferSubData 更新 VBO 中的数据
+        # 必须先绑定 VBO
+        if self.mass_vbo:
+            glBindBuffer(GL_ARRAY_BUFFER, self.mass_vbo)
+            glBufferSubData(GL_ARRAY_BUFFER, 0,
+                            mass_vertices.nbytes, mass_vertices)
+            glBindBuffer(GL_ARRAY_BUFFER, 0)  # 解除绑定
+
+    def get_spring_vbo(self):
 
         # 弹簧包含两端直线段与中间的弹簧折线段
         section_height = self.suspension_stroke / 6
         coil_height = (self.suspension_stroke -
-                       2 * section_height)/self.spring_coils
+                       2 * section_height) / self.spring_coils
 
-        glColor3f(0.8, 0.4, 0.1)  # Orange-brown
-        glLineWidth(2.0)
-
-        glBegin(GL_LINE_STRIP)
-        # 从下向上绘制
-        glVertex2f(self.spring_joint_a[0], self.spring_joint_a[1])
-        glVertex2f(self.spring_joint_a[0],
-                   self.spring_joint_a[1] + section_height)
+        vertices = []
+        vertices.append(self.spring_joint_a[0], self.spring_joint_a[1])
+        vertices.append(self.spring_joint_a[0],
+                        self.spring_joint_a[1] + section_height)
 
         x_direction = 1
 
@@ -178,110 +163,114 @@ class MassSpringDamperGL(QOpenGLWidget):
             x = self.spring_joint_a[0] + x_direction*self.spring_width/2
             y = self.spring_joint_a[1] + section_height + coil_height*(id+1)
             x_direction = -x_direction
-            glVertex2f(x, y)
+            vertices.append(x, y)
 
-        glVertex2f(self.spring_joint_b[0],
-                   self.spring_joint_a[1] + section_height + coil_height*(self.spring_coils))
-        glVertex2f(self.spring_joint_b[0], self.spring_joint_b[1])
-        glEnd()
+        vertices.append(self.spring_joint_b[0],
+                        self.spring_joint_a[1] + section_height + coil_height*(self.spring_coils))
+        vertices.append(self.spring_joint_b[0], self.spring_joint_b[1])
 
-    def draw_damper(self):
+        spring_vertices = np.array(vertices, dtype=np.float32)
+
+        # 使用 glBufferSubData 更新 VBO 中的数据
+        # 必须先绑定 VBO
+        if self.spring_vbo:
+            glBindBuffer(GL_ARRAY_BUFFER, self.spring_vbo)
+            glBufferSubData(GL_ARRAY_BUFFER, 0,
+                            sizeof(spring_vertices), spring_vertices)
+            glBindBuffer(GL_ARRAY_BUFFER, 0)  # 解除绑定
+
+    def get_damper_vbo(self):
 
         section_height = (self.suspension_stroke - self.damper_height)/2
 
-        glColor3f(0.8, 0.4, 0.1)  # Orange-brown
-        glLineWidth(2.0)
+        vertices = []
 
-        glBegin(GL_LINES)
-        glVertex2f(self.damper_joint_a[0], self.damper_joint_a[1])
-        glVertex2f(self.damper_joint_a[0],
-                   self.damper_joint_a[1] + section_height)
+        vertices.append(self.damper_joint_a[0], self.damper_joint_a[1])
+        vertices.append(self.damper_joint_a[0],
+                        self.damper_joint_a[1] + section_height)
 
-        glVertex2f(self.damper_joint_a[0] - self.damper_width/2,
-                   self.damper_joint_a[1] + section_height)
-        glVertex2f(self.damper_joint_a[0] - self.damper_width/2,
-                   self.damper_joint_a[1] + section_height + self.damper_height)
+        vertices.append(self.damper_joint_a[0] - self.damper_width/2,
+                        self.damper_joint_a[1] + section_height)
+        vertices.append(self.damper_joint_a[0] - self.damper_width/2,
+                        self.damper_joint_a[1] + section_height + self.damper_height)
 
-        glVertex2f(self.damper_joint_a[0] + self.damper_width/2,
-                   self.damper_joint_a[1] + section_height)
-        glVertex2f(self.damper_joint_a[0] + self.damper_width/2,
-                   self.damper_joint_a[1] + section_height + self.damper_height)
+        vertices.append(self.damper_joint_a[0] + self.damper_width/2,
+                        self.damper_joint_a[1] + section_height)
+        vertices.append(self.damper_joint_a[0] + self.damper_width/2,
+                        self.damper_joint_a[1] + section_height + self.damper_height)
 
-        glVertex2f(self.damper_joint_a[0] - self.damper_width/2,
-                   self.damper_joint_a[1] + section_height)
-        glVertex2f(self.damper_joint_a[0] + self.damper_width/2,
-                   self.damper_joint_a[1] + section_height)
+        vertices.append(self.damper_joint_a[0] - self.damper_width/2,
+                        self.damper_joint_a[1] + section_height)
+        vertices.append(self.damper_joint_a[0] + self.damper_width/2,
+                        self.damper_joint_a[1] + section_height)
 
-        glVertex2f(self.damper_joint_a[0] - self.damper_width/2,
-                   self.damper_joint_a[1] + section_height + self.damper_thickness)
-        glVertex2f(self.damper_joint_a[0] + self.damper_width/2,
-                   self.damper_joint_a[1] + section_height + self.damper_thickness)
+        vertices.append(self.damper_joint_a[0] - self.damper_width/2,
+                        self.damper_joint_a[1] + section_height + self.damper_thickness)
+        vertices.append(self.damper_joint_a[0] + self.damper_width/2,
+                        self.damper_joint_a[1] + section_height + self.damper_thickness)
 
-        glVertex2f(self.damper_joint_a[0],
-                   self.damper_joint_a[1] + section_height + self.damper_thickness)
-        glVertex2f(self.damper_joint_b[0], self.damper_joint_b[1])
+        vertices.append(self.damper_joint_a[0],
+                        self.damper_joint_a[1] + section_height + self.damper_thickness)
+        vertices.append(self.damper_joint_b[0], self.damper_joint_b[1])
         glEnd()
 
-    def draw_actuator(self):
+    def get_actuator_vbo(self):
         # Draw circle
         actuator_center = self.actuator_joint_a[1] + self.suspension_stroke/2
 
-        glColor3f(0.1, 0.6, 0.1)  # Green
+        vertices = []
 
-        glBegin(GL_LINES)
-        glVertex2f(self.actuator_joint_a[0], self.actuator_joint_a[1])
-        glVertex2f(self.actuator_joint_a[0],
-                   actuator_center - self.actuator_radius)
+        vertices.append(self.actuator_joint_a[0], self.actuator_joint_a[1])
+        vertices.append(self.actuator_joint_a[0],
+                        actuator_center - self.actuator_radius)
 
-        glVertex2f(self.actuator_joint_b[0],
-                   actuator_center + self.actuator_radius)
-        glVertex2f(self.actuator_joint_b[0], self.actuator_joint_b[1])
+        vertices.append(self.actuator_joint_b[0],
+                        actuator_center + self.actuator_radius)
+        vertices.append(self.actuator_joint_b[0], self.actuator_joint_b[1])
 
         angle = 5 / 4 * np.pi
         x = self.actuator_joint_a[0] + \
             self.actuator_radius * np.cos(angle)
         y = actuator_center + \
             self.actuator_radius * np.sin(angle)
-        glVertex2f(x, y)
+        vertices.append(x, y)
 
         angle = 1 / 4 * np.pi
         x = self.actuator_joint_a[0] + \
             self.actuator_radius * np.cos(angle)
         y = actuator_center + \
             self.actuator_radius * np.sin(angle)
-        glVertex2f(x, y)
-
-        glEnd()
+        vertices.append(x, y)
 
         # 绘制箭头
         arrow_head = np.array([x, y])
 
         glBegin(GL_LINE_LOOP)
-        glVertex2f(x, y)
+        vertices.append(x, y)
 
         angle = 5 / 4 * np.pi - 10 * np.pi / 180
         x = arrow_head[0] + self.actuator_radius * np.cos(angle)
         y = arrow_head[1] + self.actuator_radius * np.sin(angle)
-        glVertex2f(x, y)
+        vertices.append(x, y)
 
         angle = 5 / 4 * np.pi + 10 * np.pi / 180
         x = arrow_head[0] + self.actuator_radius * np.cos(angle)
         y = arrow_head[1] + self.actuator_radius * np.sin(angle)
-        glVertex2f(x, y)
+        vertices.append(x, y)
 
-        glEnd()
-
-        glBegin(GL_LINE_LOOP)
         for id in range(36):
             angle = id * 10 * np.pi / 180
             x = self.actuator_joint_a[0] + \
                 self.actuator_radius * np.cos(angle)
             y = actuator_center + \
                 self.actuator_radius * np.sin(angle)
-            glVertex2f(x, y)
-        glEnd()
+            vertices.append(x, y)
 
-    def draw_dashed_lines(self):
+    def get_base_vbo(self):
+
+        vertices = []
+
+    def get_dashed_vbo(self):
 
         # 2. 启用虚线模式
         glEnable(GL_LINE_STIPPLE)
@@ -292,16 +281,16 @@ class MassSpringDamperGL(QOpenGLWidget):
         glLineStipple(5, 0xAAAA)
 
         wb = self.base_width
-        glColor3f(0.5, 0.5, 0.5)
-        glLineWidth(2.0)
 
-        glBegin(GL_LINES)
-        glVertex2f(-wb/2 - 10, self.base_position_init)
-        glVertex2f(+wb/2 + 10, self.base_position_init)
+        vertices = []
 
-        glVertex2f(-wb/2 - 10, self.mass_position_init + self.mass_height/2)
-        glVertex2f(+wb/2 + 10, self.mass_position_init + self.mass_height/2)
-        glEnd()
+        vertices.append(-wb/2 - 10, self.base_position_init)
+        vertices.append(+wb/2 + 10, self.base_position_init)
+
+        vertices.append(-wb/2 - 10, self.mass_position_init +
+                        self.mass_height/2)
+        vertices.append(+wb/2 + 10, self.mass_position_init +
+                        self.mass_height/2)
 
         glDisable(GL_LINE_STIPPLE)
 
@@ -309,8 +298,8 @@ class MassSpringDamperGL(QOpenGLWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("质量-阻尼-弹簧系统仿真")
-        self.setFixedSize(800, 680)
+        self.setWindowTitle("质量-阻尼-弹簧仿真系统")
+        self.setFixedSize(800, 700)
         self.move(100, 100)
 
         # Main components
@@ -329,7 +318,8 @@ class MainWindow(QMainWindow):
 
         self.time = []
 
-        self.step_count = 0
+        self.step_now = 0
+        self.time_now = 0.0
 
         # --- UI Setup ---
         central_widget = QWidget()
@@ -502,6 +492,9 @@ class MainWindow(QMainWindow):
         self.simulation_layout.addLayout(simulation_layout_3)
         layout_left.addWidget(self.simulation_group)
 
+        self.status_label = QLabel("Ready.")
+        layout_left.addWidget(self.status_label)
+
         # Plotting widget
         self.plot_widget_1 = pg.PlotWidget()
         self.plot_widget_1.setTitle("Position vs. Time", color='black')
@@ -546,7 +539,7 @@ class MainWindow(QMainWindow):
 
         # 定时器
         self.timer = QTimer(self)
-        self.timer.setInterval(3)  # 每 2 毫秒触发一次
+        self.timer.setInterval(5)  # 每 5 毫秒触发一次
         self.timer.timeout.connect(self.update_simulation)
 
     def btn_show_info_clicked(self):
@@ -598,11 +591,25 @@ class MainWindow(QMainWindow):
         layout.addWidget(label2)
         layout.addWidget(label3)
 
+        self.control_type = self.sim_comboboxes[1].currentIndex()
+
+        if self.control_type == 0:
+            pass
+        else:
+            pass
+
         dialog.setLayout(layout)
         dialog.exec()  # 阻塞式弹出
 
     def btn_bodeplot_clicked(self):
-        pass
+
+        self.msd.m = float(self.msd_params_boxes[0].text())
+        self.msd.c = float(self.msd_params_boxes[1].text())
+        self.msd.k = float(self.msd_params_boxes[2].text())
+
+        self.pid.kp = float(self.pid_params_boxes[0].text())
+        self.pid.ki = float(self.pid_params_boxes[1].text())
+        self.pid.kd = float(self.pid_params_boxes[2].text())
 
     def system_params_initilization(self):
 
@@ -619,7 +626,8 @@ class MainWindow(QMainWindow):
         self.pid.kd = float(self.pid_params_boxes[2].text())
 
         self.time_stop = float(self.sim_boxes[2].text())
-        self.step_count = 0
+        self.step_now = 0
+        self.time_now = 0.0
 
         dt = self.dt
         self.time = np.arange(0, self.time_stop, dt)
@@ -653,12 +661,27 @@ class MainWindow(QMainWindow):
         self.control_type = self.sim_comboboxes[1].currentIndex()
         self.target_value = float(self.sim_boxes[3].text())
 
-        self.x_series = []
-        self.v_series = []
-        self.a_series = []
-        self.f_series = []
+        self.x_series = np.zeros(nt, dtype=float)
+        self.v_series = np.zeros(nt, dtype=float)
+        self.a_series = np.zeros(nt, dtype=float)
+        self.f_series = np.zeros(nt, dtype=float)
+
+        self.plot_curve_11.setData([], [])
+        self.plot_curve_12.setData([], [])
+        self.plot_curve_2.setData([], [])
+        self.plot_curve_3.setData([], [])
+
+        self.plot_widget_1.setXRange(0, self.time_stop)
+        self.plot_widget_2.setXRange(0, self.time_stop)
+        self.plot_widget_3.setXRange(0, self.time_stop)
 
     def btn_simulate_clicked(self):
+
+        self.status_label.setText("Simulation starts.")
+
+        # 停止并重新启动定时器，开始动画
+        if self.timer.isActive():
+            self.timer.stop()
 
         self.system_params_initilization()
 
@@ -675,21 +698,26 @@ class MainWindow(QMainWindow):
             force = self.pid.calculate_force(error)
 
             self.msd.update(self.excitation[id:id+2], force)
-            self.x_series.append(self.msd.x)
-            self.v_series.append(self.msd.v)
-            self.a_series.append(self.msd.a)
-            self.f_series.append(force)
+
+            self.x_series[id] = self.msd.x
+            self.v_series[id] = self.msd.v
+            self.a_series[id] = self.msd.a
+            self.f_series[id] = force
 
         if len(self.x_series) > 0:
             self.plot_curve_11.setData(self.time[:-1], self.excitation[:-1])
-            self.plot_curve_12.setData(self.time[:-1], np.array(self.x_series))
-            self.plot_curve_2.setData(self.time[:-1], np.array(self.a_series))
-            self.plot_curve_3.setData(self.time[:-1], np.array(self.f_series))
+            self.plot_curve_12.setData(self.time[:-1], self.x_series[:-1])
+            self.plot_curve_2.setData(self.time[:-1], self.a_series[:-1])
+            self.plot_curve_3.setData(self.time[:-1], self.f_series[:-1])
+
+        self.status_label.setText("Simulation stops.")
 
     def btn_animate_clicked(self):
         """
         当点击 'animate' 按钮时调用，用于启动动画仿真。
         """
+        self.status_label.setText("Animation starts.")
+
         self.system_params_initilization()
 
         # 停止并重新启动定时器，开始动画
@@ -702,9 +730,9 @@ class MainWindow(QMainWindow):
         定时器触发的函数，用于驱动动画和图形更新。
         """
         # 检查是否达到仿真时长，如果达到则停止定时器
-        if self.step_count >= len(self.time) - 2:
+        if self.step_now >= len(self.time) - 2:
             self.timer.stop()
-            print("动画结束。")
+            self.status_label.setText("Animation stops.")
             return
 
         # 计算PID控制力
@@ -722,28 +750,30 @@ class MainWindow(QMainWindow):
 
         # 更新物理模型
         self.msd.update(
-            self.excitation[self.step_count:self.step_count+2], control_force)
+            self.excitation[self.step_now:self.step_now+2], control_force)
+
+        id = self.step_now
+        self.x_series[id] = self.msd.x
+        self.v_series[id] = self.msd.v
+        self.a_series[id] = self.msd.a
+        self.f_series[id] = control_force
+
+        if id % 20 == 0:
+            # 更新Pyqtgraph曲线（使用整个数据历史）
+            self.plot_curve_11.setData(
+                self.time[:id+1], self.excitation[:id+1])
+            self.plot_curve_12.setData(self.time[:id+1], self.x_series[:id+1])
+            self.plot_curve_2.setData(self.time[:id+1], self.a_series[:id+1])
+            self.plot_curve_3.setData(self.time[:id+1], self.f_series[:id+1])
 
         # 更新OpenGL绘图
         self.msdviz.update_positions(
-            self.msd.x, self.excitation[self.step_count + 1])
+            self.msd.x, self.excitation[self.step_now + 1])
         self.msdviz.update()
 
-        # # 记录数据
-        # self.x_series.append(self.msd.x)
-        # self.v_series.append(self.msd.v)
-        # self.a_series.append(self.msd.a)
-        # self.f_series.append(control_force)
-
-        # # 更新Pyqtgraph曲线（使用整个数据历史）
-        # time = self.time[:len(self.x_series)]
-        # # self.plot_curve_11.setData(time, self.excitation[:self.step_count + 1])
-        # self.plot_curve_12.setData(time, np.array(self.x_series))
-        # self.plot_curve_2.setData(time, np.array(self.a_series))
-        # self.plot_curve_3.setData(time, np.array(self.f_series))
-
         # 更新时间步
-        self.step_count += 1
+        self.step_now += 1
+        self.time_now += self.dt
 
     def _apply_styles(self):
         palette = self.palette()
