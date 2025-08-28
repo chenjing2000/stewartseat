@@ -1,6 +1,7 @@
 
 from OpenGL.GL.shaders import *
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
+from PySide6.QtCore import QTimer, Signal
 from OpenGL.GL import *
 
 import ctypes
@@ -86,17 +87,19 @@ class PIDController:
         return output
 
 
+# 以下是质量-阻尼-弹簧系统中各零部件的图形绘制方法
 vertex_shader_source = """
 #version 330 core
 layout (location = 0) in vec2 aPos;
 uniform vec2 uWindowSize;  // 窗口大小
+uniform mat4 uTransform;  // 变换矩阵
 void main()
 {
     // 将像素坐标转换到 NDC
-    float x = (aPos.x / uWindowSize.x) * 4.0 - 0.0;
-    float y = (aPos.y / uWindowSize.y) * 4.0 - 0.5;
+    float x = (aPos.x / uWindowSize.x) * 2.0 - 0.0;
+    float y = (aPos.y / uWindowSize.y) * 2.0 - 0.0;
 
-    gl_Position = vec4(x, y, 0.0, 1.0);
+    gl_Position = uTransform * vec4(x, y, 0.0, 1.0);
 }
 """
 
@@ -128,6 +131,7 @@ class Shaders():
         self.wsize_location = -1
         self.color_location = -1
         self.color = color
+        self.utrans_location = -1
 
     def setup(self):
         """
@@ -148,6 +152,22 @@ class Shaders():
             self.shaderProgram, "uColor")
         if self.color_location == -1:
             print("Warning: uColor uniform not found in shader.")
+
+        self.utrans_location = glGetUniformLocation(
+            self.shaderProgram, "uTransform")
+        if self.utrans_location == -1:
+            print("Warning: uTransform uniform not found in shader.")
+
+        glUseProgram(0)
+
+    def set_transformation(self, transformation_matrix: np.ndarray):
+        """
+        设置投影矩阵 uTransform。
+        """
+        glUseProgram(self.shaderProgram)
+        # glUniformMatrix4fv 用于上传 4x4 矩阵
+        glUniformMatrix4fv(self.utrans_location, 1,
+                           GL_FALSE, *transformation_matrix)
 
         glUseProgram(0)
 
@@ -225,7 +245,7 @@ class PartMass():
 
         vertices = self.update_vertices()
 
-        color = [0.8, 0.4, 0.4]
+        color = [0.2, 0.3, 0.7]
 
         self.shader = Shaders(vertices,
                               vertex_shader_source,
@@ -266,7 +286,7 @@ class PartBase():
 
         vertices = self.update_vertices()
 
-        color = [0.3, 0.5, 0.6]
+        color = [0.3, 0.6, 0.2]
 
         self.shader = Shaders(vertices,
                               vertex_shader_source,
@@ -300,11 +320,11 @@ class PartDatums():
 
         self.width = 80
         self.positions = [0, 70]  # 参考线的位置
-        self.section_num = 20
+        self.section_num = 20  # 必须是偶数，否则出错
 
         vertices = self.update_vertices()
 
-        color = [0.7, 0.3, 0.3]
+        color = [0.8, 0.5, 0.2]
 
         self.shader = Shaders(vertices,
                               vertex_shader_source,
@@ -318,7 +338,7 @@ class PartDatums():
         for kd in range(2):
             x_datum = -self.width / 2
             y_datum = self.positions[kd]
-            for id in range(self.section_num + 1):
+            for id in range(self.section_num):
                 x_datum += x_step
                 vertices.extend([x_datum, y_datum])
 
@@ -331,9 +351,9 @@ class PartDatums():
 
         vertices = self.update_vertices()
         self.shader.update_vertices(vertices)
-        self.shader.draw(GL_LINES, 0, self.section_num + 1, 1.5)
+        self.shader.draw(GL_LINES, 0, self.section_num, 1.5)
         self.shader.draw(GL_LINES,
-                         self.section_num + 1, self.section_num + 1, 1.5)
+                         self.section_num, self.section_num, 1.5)
 
 
 class PartSpring():
@@ -349,7 +369,7 @@ class PartSpring():
 
         vertices = self.update_vertices()
 
-        color = [0.7, 0.8, 0.6]
+        color = [0.6, 0.3, 0.7]
 
         self.shader = Shaders(vertices,
                               vertex_shader_source,
@@ -413,7 +433,7 @@ class PartDamper():
 
         vertices = self.update_vertices()
 
-        color = [0.8, 0.8, 0.5]
+        color = [0.2, 0.7, 0.6]
 
         self.shader = Shaders(vertices,
                               vertex_shader_source,
@@ -484,7 +504,7 @@ class PartActuator():
 
         vertices = self.update_vertices()
 
-        color = [0.9, 0.6, 0.2]
+        color = [0.6, 0.4, 0.3]
 
         self.shader = Shaders(vertices,
                               vertex_shader_source,
@@ -563,7 +583,7 @@ class MassSpringDamperGL(QOpenGLWidget):
         super().__init__(parent)
         self.setFixedSize(400, 400)
         # 视觉比例：把位移（米）映射到屏幕（单位坐标）
-        self.meter_to_screen = 40  # 1 m -> 40 px（在内部用归一化再缩放）
+        self.meter_to_screen = 30  # 1 m -> 30 px（在内部用归一化再缩放）
 
         self.datums = PartDatums(self.meter_to_screen)
         self.mass = PartMass(self.meter_to_screen)
@@ -576,32 +596,49 @@ class MassSpringDamperGL(QOpenGLWidget):
         self.mass_motion = 0.0
         self.base_motion = 0.0
 
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.update)
+        self.timer.start(10)  # ~60 FPS
+
     def initializeGL(self):
         # 打印 OpenGL 版本
         # print("OpenGL Version:", glGetString(GL_VERSION).decode())
 
-        glClearColor(0.3, 0.3, 0.4, 1.0)
+        glClearColor(0.8, 0.8, 0.8, 1.0)
         glEnable(GL_BLEND)
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
 
         # 调用部件的 setup 方法
-        self.datums.shader.setup()
-        self.mass.shader.setup()
-        self.damper.shader.setup()
-        self.spring.shader.setup()
-        self.actuator.shader.setup()
-        self.base.shader.setup()
+        parts = [self.datums, self.mass, self.damper,
+                 self.spring, self.actuator, self.base]
+        for part in parts:
+            part.shader.setup()
 
     def resizeGL(self, width, height):
         glViewport(0, 0, width, height)
 
         window_size = [width, height]
-        self.datums.shader.set_window_size(window_size)
-        self.mass.shader.set_window_size(window_size)
-        self.damper.shader.set_window_size(window_size)
-        self.spring.shader.set_window_size(window_size)
-        self.actuator.shader.set_window_size(window_size)
-        self.base.shader.set_window_size(window_size)
+
+        parts = [self.datums, self.mass, self.damper,
+                 self.spring, self.actuator, self.base]
+        for part in parts:
+            part.shader.set_window_size(window_size)
+
+        # 3. 创建变换矩阵
+        # 使用 NumPy 来构建矩阵。
+        transformation_matrix = np.array([
+            [2, 0, 0, 0],
+            [0, 2, 0, 0],
+            [0, 0, 1, 0],
+            [0, -0.3, 0, 1]
+        ], dtype=np.float32)
+
+        # 4. 将投影矩阵传递给所有部件的着色器
+        parts = [self.mass, self.damper, self.spring,
+                 self.actuator, self.base, self.datums]
+
+        for part in parts:
+            part.shader.set_transformation(transformation_matrix)
 
     def paintGL(self):
         glClear(GL_COLOR_BUFFER_BIT)
@@ -613,4 +650,4 @@ class MassSpringDamperGL(QOpenGLWidget):
         self.actuator.draw(np.array([self.base_motion, self.mass_motion]))
         self.base.draw(self.base_motion)
 
-        self.update()  # 告诉 PyQt 重绘窗口
+        # self.update()  # 告诉 PyQt 重绘窗口，可能触发 CPU 满载

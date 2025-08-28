@@ -489,8 +489,9 @@ class MainWindow(QMainWindow):
             self.plot_curve_3.setData(self.time[:id+1], self.f_series[:id+1])
 
         # 更新OpenGL绘图
-        self.msdviz.update_positions(
-            self.msd.x, self.excitation[self.step_now + 1])
+        self.msdviz.mass_motion = self.msd.x
+        self.msdviz.base_motion = self.excitation[self.step_now + 1]
+
         self.msdviz.update()
 
         # 更新时间步
