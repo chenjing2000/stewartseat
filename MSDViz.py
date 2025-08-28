@@ -1,5 +1,7 @@
 # opengl_widget.py
 
+import glfw
+from OpenGL.GL.shaders import *
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget,
                                QVBoxLayout, QHBoxLayout, QLabel,
@@ -10,11 +12,482 @@ from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtGui import QPalette, QColor, QDoubleValidator
 from PySide6.QtCore import QTimer, Signal
 from OpenGL.GL import *
+import ctypes
 
 import numpy as np
 import control as ct
 
 from MSDModel import MSDPlant, PIDController
+
+vertex_shader_source = """
+#version 330 core
+layout (location = 0) in vec2 aPos;
+uniform vec2 uWindowSize;  // 窗口大小
+void main()
+{
+    // 将像素坐标转换到 NDC
+    float x = (aPos.x / uWindowSize.x) * 2.0 - 1.0;
+    float y = (aPos.y / uWindowSize.y) * 2.0 - 1.0;
+
+    gl_Position = vec4(x, y, 0.0, 1.0);
+}
+"""
+
+fragment_shader_source = """
+#version 330 core
+uniform vec3 uColor;
+out vec4 FragColor;
+void main()
+{
+    FragColor = vec4(uColor, 1.0);
+}
+"""
+
+
+class Shaders():
+    def __init__(self, vertices: np.ndarray,
+                 vertex_shader_source: str,
+                 fragment_shader_source: str,
+                 color: tuple[float, float, float]):
+
+        self.vertices = vertices
+        self.vs_src = vertex_shader_source
+        self.fs_src = fragment_shader_source
+
+        # 初始状态
+        self.vao = None
+        self.vbo = None
+        self.shaderProgram = None
+        self.wsize_location = -1
+        self.color_location = -1
+        self.color = color
+
+        self.setup()
+
+    def setup(self):
+        """
+        初始化所有 OpenGL 资源，包括着色器程序、VAO和VBO。
+        """
+        self._create_program()
+        self._create_objects()
+
+        # 获取 uniform location，只需要执行一次
+        glUseProgram(self.shaderProgram)
+        self.wsize_location = glGetUniformLocation(
+            self.shaderProgram, "uWindowSize")
+        if self.wsize_location == -1:
+            print("Warning: uWindowSize uniform not found in shader.")
+
+        self.color_location = glGetUniformLocation(
+            self.shaderProgram, "uColor")
+        if self.color_location == -1:
+            print("Warning: uColor uniform not found in shader.")
+
+        glUseProgram(0)
+
+    def set_window_size(self, window_size: tuple[int, int]):
+
+        glUseProgram(self.shaderProgram)
+
+        glUniform2f(self.wsize_location, *window_size)
+
+        glUseProgram(0)
+
+    def _create_program(self):
+        vertex_shader = compileShader(self.vs_src, GL_VERTEX_SHADER)
+        fragment_shader = compileShader(self.fs_src, GL_FRAGMENT_SHADER)
+        self.shaderProgram = compileProgram(vertex_shader, fragment_shader)
+
+    def _create_objects(self):
+        """
+        创建VAO和VBO，并上传初始顶点数据。
+        """
+        self.vao = glGenVertexArrays(1)
+        self.vbo = glGenBuffers(1)
+
+        glBindVertexArray(self.vao)
+        glBindBuffer(GL_ARRAY_BUFFER, self.vbo)
+        glBufferData(GL_ARRAY_BUFFER, self.vertices.nbytes,
+                     self.vertices, GL_DYNAMIC_DRAW)
+
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, ctypes.c_void_p(0))
+        glEnableVertexAttribArray(0)
+
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
+        glBindVertexArray(0)
+
+    def update_vertices(self, new_vertices: np.ndarray):
+        """
+        更新 VBO 中的顶点数据。
+        """
+        self.vertices = new_vertices
+        # 这个更新操作不需要在每次绘制时都做，只在数据变化时才做
+        glBindBuffer(GL_ARRAY_BUFFER, self.vbo)
+        glBufferSubData(GL_ARRAY_BUFFER, 0,
+                        self.vertices.nbytes, self.vertices)
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
+
+    def draw(self, mode: int, first: int, count: int):
+        """
+        绘制组件的一部分。
+
+        参数:
+            mode (int): OpenGL 绘制模式 (例如 GL_LINES)。
+            first (int): 从 VBO 中第几个顶点开始绘制。
+            count (int): 绘制多少个顶点
+        """
+        glUseProgram(self.shaderProgram)
+
+        glBindVertexArray(self.vao)
+
+        glUniform3f(self.color_location, *self.color)
+
+        glDrawArrays(mode, first, count)
+
+        glBindVertexArray(0)
+        glUseProgram(0)
+
+
+class PartMass():
+    def __init__(self, screen_scale: float = 40.0):
+        self.screen_scale = screen_scale
+
+        self.width = 40.0
+        self.height = 20.0
+        self.position = 60.0
+
+        vertices = self.update_vertices()
+
+        color = [0.3, 0.4, 0.5]
+
+        self.shader = Shaders(vertices,
+                              vertex_shader_source,
+                              fragment_shader_source,
+                              color)
+
+    def update_vertices(self, displacement: float = 0.0):
+
+        z = displacement * self.screen_scale
+        w = self.width
+        h = self.height
+        p = self.position
+
+        vertices = np.array([-w/2, p + z,
+                             -w/2, p + h + z,
+                             +w/2, p + h + z,
+                             +w/2, p + z
+                             ], dtype=np.float32)
+
+        return vertices
+
+    def draw(self, displacement: float = 0.0):
+        """
+        更新质量块的位置，并使用 Shaders 类进行绘制。
+        """
+
+        vertices = self.update_vertices(displacement)
+        self.shader.update_vertices(vertices)
+        self.shader.draw(GL_TRIANGLE_FAN, 0, 2)
+
+
+class PartBase():
+    def __init__(self, screen_scale: float = 40.0):
+        self.screen_scale = screen_scale
+
+        self.width = 50
+        self.position = 0
+
+        vertices = self.update_vertices()
+
+        color = [0.3, 0.4, 0.5]
+
+        self.shader = Shaders(vertices,
+                              vertex_shader_source,
+                              fragment_shader_source,
+                              color)
+
+    def update_vertices(self, displacement: float = 0.0):
+
+        z = displacement * self.screen_scale
+        w = self.width
+        p = self.position
+
+        vertices = np.array([-w/2, p + z,
+                             +w/2, p + z], dtype=np.float32)
+
+        return vertices
+
+    def draw(self, displacement: float = 0.0):
+        """
+        更新底部的位置，并使用 Shaders 类进行绘制。
+        """
+
+        vertices = self.update_vertices(displacement)
+        self.shader.update_vertices(vertices)
+        self.shader.draw(GL_LINE_STRIP, 0, 2)
+
+
+class PartDatum():
+    def __init__(self, screen_scale: float = 40.0):
+        self.screen_scale = screen_scale
+
+        self.width = 60
+        self.positions = [0, 60]
+        self.section_num = 60
+
+        vertices = self.update_vertices()
+
+        color = [0.3, 0.4, 0.5]
+
+        self.shader = Shaders(vertices,
+                              vertex_shader_source,
+                              fragment_shader_source,
+                              color)
+
+    def update_vertices(self):
+
+        x_step = self.width / (self.section_num + 1)
+        vertices = []
+        for kd in range(2):
+            x_datum = 0.0
+            y_datum = self.positions[kd]
+            for id in range(self.section_num + 1):
+                x_datum += x_step
+                vertices.extend([x_datum, y_datum])
+
+        return np.array(vertices, dtype=np.float32)
+
+    def draw(self):
+        """
+        使用 Shaders 类绘制参考线。
+        """
+
+        vertices = self.update_vertices()
+        self.shader.update_vertices(vertices)
+        self.shader.draw(GL_LINES, 0, self.section_num + 1)
+        self.shader.draw(GL_LINES, self.section_num + 1, self.section_num + 1)
+
+
+class PartSpring():
+    def __init__(self, screen_scale: float = 40.0):
+        self.screen_scale = screen_scale
+
+        self.spring_center = 0  # x position
+        self.spring_width = 10
+        self.spring_coils = 11
+
+        self.lower_position = 0.0  # = PartBase.position
+        self.upper_position = 60.0  # = PartMass.position
+
+        vertices = self.update_vertices()
+
+        color = [0.3, 0.4, 0.5]
+
+        self.shader = Shaders(vertices,
+                              vertex_shader_source,
+                              fragment_shader_source,
+                              color)
+
+    def update_vertices(self, displacements: np.ndarray = np.array([0.0, 0.0])):
+        """
+        参数：
+            displacements: (2,) array, [lower, upper] displacements.
+        """
+        zs = displacements * self.screen_scale
+
+        upper_location = self.upper_position + zs[1]
+        lower_location = self.lower_position + zs[0]
+        spring_stroke = upper_location - lower_location
+        spring_shank = spring_stroke / 6
+        coil_height = (spring_stroke -
+                       2 * spring_shank) / (self.spring_coils + 1)
+
+        vertices = []
+        vertices.extend([self.spring_center, lower_location])
+        vertices.extend([self.spring_center,
+                        lower_location + spring_shank])
+
+        x_direction = 1
+        y_spring = lower_location + spring_shank
+
+        for id in range(self.spring_coils - 1):
+            x_spring = self.spring_center + x_direction * self.spring_width/2
+            x_direction = -x_direction
+            y_spring += coil_height
+            vertices.extend([x_spring, y_spring])
+
+        vertices.extend([self.spring_center,
+                        upper_location - spring_shank])
+        vertices.extend([self.spring_center, upper_location])
+
+        return np.array(vertices, dtype=np.float32)
+
+    def draw(self, displacement: float = 0.0):
+        """
+        更新弹簧的位置，并使用 Shaders 类进行绘制。
+        """
+
+        vertices = self.update_vertices(displacement)
+        self.shader.update_vertices(vertices)
+        self.shader.draw(GL_LINE_STRIP, 0, len(vertices) // 2)
+
+
+class PartDamper():
+    def __init__(self, screen_scale: float = 40.0):
+        self.screen_scale = screen_scale
+
+        self.damper_center = -15  # x position
+        self.damper_height = 20
+        self.damper_width = 10
+
+        self.lower_position = 0.0  # = PartBase.position
+        self.upper_position = 60.0  # = PartMass.position
+
+        vertices = self.update_vertices()
+
+        color = [0.3, 0.4, 0.5]
+
+        self.shader = Shaders(vertices,
+                              vertex_shader_source,
+                              fragment_shader_source,
+                              color)
+
+    def update_vertices(self, displacements: np.ndarray = np.array([0.0, 0.0])):
+        """
+        参数：
+            displacements: (2,) array, [lower, upper] displacements.
+        """
+        zs = displacements * self.screen_scale
+
+        upper_location = self.upper_position + zs[1]
+        lower_location = self.lower_position + zs[0]
+
+        center_x = self.damper_center
+        center_y = (upper_location + lower_location) / 2
+
+        vertices = []
+        vertices.extend([center_x, lower_location])
+        vertices.extend([center_x, center_y - self.damper_height / 2])
+
+        vertices.extend([center_x - self.damper_width/2,
+                        center_y - self.damper_height / 2])
+        vertices.extend([center_x + self.damper_width/2,
+                        center_y - self.damper_height / 2])
+
+        vertices.extend([center_x - self.damper_width/2,
+                        center_y + self.damper_height/2])
+        vertices.extend([center_x + self.damper_width/2,
+                        center_y + self.damper_height/2])
+
+        vertices.extend([center_x - self.damper_width/2,
+                        center_y - self.damper_height / 2])
+        vertices.extend([center_x - self.damper_width/2,
+                        center_y + self.damper_height / 2])
+
+        vertices.extend([center_x + self.damper_width/2,
+                        center_y - self.damper_height / 2])
+        vertices.extend([center_x + self.damper_width/2,
+                        center_y + self.damper_height / 2])
+
+        vertices.extend([center_x, center_y])
+        vertices.extend([center_x, upper_location])
+
+        return np.array(vertices, dtype=np.float32)
+
+    def draw(self, displacement: float = 0.0):
+        """
+        更新阻尼的位置，并使用 Shaders 类进行绘制。
+        """
+
+        vertices = self.update_vertices(displacement)
+        self.shader.update_vertices(vertices)
+        self.shader.draw(GL_LINES, 0, len(vertices) // 2)
+
+
+class PartActuator():
+    def __init__(self, screen_scale: float = 40.0):
+        self.screen_scale = screen_scale
+
+        self.actuator_center = 15  # x position
+        self.actuator_radius = 6
+
+        self.lower_position = 0.0  # = PartBase.position
+        self.upper_position = 60.0  # = PartMass.position
+
+        vertices = self.update_vertices()
+
+        color = [0.3, 0.4, 0.5]
+
+        self.shader = Shaders(vertices,
+                              vertex_shader_source,
+                              fragment_shader_source,
+                              color)
+
+    def update_vertices(self, displacements: np.ndarray = np.array([0.0, 0.0])):
+        """
+        参数：
+            displacements: (2,) array, [lower, upper] displacements.
+        """
+        zs = displacements * self.screen_scale
+
+        upper_location = self.upper_position + zs[1]
+        lower_location = self.lower_position + zs[0]
+
+        center_x = self.actuator_center
+        center_y = (upper_location + lower_location) / 2
+
+        vertices = []
+
+        # mode : GL_LINES (6 vertices)
+        vertices.extend([center_x, lower_location])
+        vertices.extend([center_x, center_y - self.actuator_radius])
+
+        vertices.extend([center_x, center_y + self.actuator_radius])
+        vertices.extend([center_x, upper_location])
+
+        rho = self.actuator_radius
+        vertices.extend([center_x + rho * np.cos(5/4*np.pi),
+                        center_y + rho * np.sin(5/4*np.pi)])
+        vertices.extend([center_x + rho * np.cos(1/4*np.pi),
+                        center_y + rho * np.sin(1/4*np.pi)])
+
+        # mode : GL_LINE_LOOP (30 vertices)
+
+        circle_section_num = 30
+        for id in range(circle_section_num):
+            alpha = id/circle_section_num * 2 * np.pi
+            x_actuator = center_x + rho * np.cos(alpha)
+            y_actuator = center_y + rho * np.sin(alpha)
+            vertices.extend([x_actuator, y_actuator])
+
+        # mode : GL_LINE_LOOP (3 vertices)
+
+        arrow_head_x = center_x + rho * np.cos(1/4*np.pi)
+        arrow_head_y = center_y + rho * np.sin(1/4*np.pi)
+        vertices.extend([arrow_head_x, arrow_head_y])
+
+        angle = 5 / 4 * np.pi - 10 * np.pi / 180
+        x_actuator = arrow_head_x + self.actuator_radius * np.cos(angle)
+        y_actuator = arrow_head_y + self.actuator_radius * np.sin(angle)
+        vertices.extend([x_actuator, y_actuator])
+
+        angle = 5 / 4 * np.pi + 10 * np.pi / 180
+        x_actuator = arrow_head_x + self.actuator_radius * np.cos(angle)
+        y_actuator = arrow_head_y + self.actuator_radius * np.sin(angle)
+        vertices.extend([x_actuator, y_actuator])
+
+        return np.array(vertices, dtype=np.float32)
+
+    def draw(self, displacement: float = 0.0):
+        """
+        更新驱动器的位置，并使用 Shaders 类进行绘制。
+        """
+
+        vertices = self.update_vertices(displacement)
+        self.shader.update_vertices(vertices)
+        self.shader.draw(GL_LINES, 0, 6)
+        self.shader.draw(GL_LINE_LOOP, 6, 30)
+        self.shader.draw(GL_LINE_LOOP, 36, 3)
 
 
 class MassSpringDamperGL(QOpenGLWidget):
@@ -26,49 +499,16 @@ class MassSpringDamperGL(QOpenGLWidget):
         # 视觉比例：把位移（米）映射到屏幕（单位坐标）
         self.meter_to_screen = 40  # 1 m -> 40 px（在内部用归一化再缩放）
 
-        # positions
-        self.mass_position_init = 60
-        self.mass_motion = 0.0  # state or response
-        self.base_position_init = 0
-        self.base_motion = 0.0  # excitation or external input
+        # initialization
+        self.mass = PartMass(self.meter_to_screen)
+        self.mass_shader = Shaders(
+            self.mass.vertices, vertex_shader_source, fragment_shader_source, self.mass.bgcolor)
 
-        # joints geometry
-        self.joints_position = np.array([-15, 0, 15])
+        self.base = PartBase(self.meter_to_screen)
+        self.base_shader = Shaders(
+            self.base.vertices, vertex_shader_source, fragment_shader_source, self.base.bgcolor)
 
-        # base geometry
-        self.base_width = 50
-
-        # mass geometry
-        self.mass_height = 20
-        self.mass_width = 40
-
-        # spring geometry
-        self.spring_coils = 11
-        self.spring_width = 10
-
-        # damper geometry
-        self.damper_height = 20
-        self.damper_width = 10
-        self.damper_thickness = 10
-
-        # actuator geometry
-        self.actuator_radius = 6
-
-        # VBO/VAO IDs
-        self.mass_vao = None
-        self.mass_vbo = None
-
-        self.base_vao = None
-        self.base_vbo = None
-
-        self.spring.vao = None
-        self.spring.vbo = None
-
-        self.damper.vao = None
-        self.damper.vbo = None
-
-        self.actuator.vao = None
-        self.actuator.vbo = None
+        self.damper = PartDamper()
 
     def initializeGL(self):
 
@@ -76,12 +516,7 @@ class MassSpringDamperGL(QOpenGLWidget):
         glEnable(GL_BLEND)
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
 
-        self.mass_vao = glGenVertexArrays(1)
-        self.mass_vbo = glGenBuffers(1)
-
-        glBindVertexArray(self.mass_vao)
-        glBindBuffer(GL_ARRAY_BUFFER, self.mass_vbo)
-        glBufferData(GL_ARRAY_BUFFER, sizeof())
+        self.mass_shader.setup()
 
     def update_positions(self, x_mass, x_base):
 
@@ -97,11 +532,8 @@ class MassSpringDamperGL(QOpenGLWidget):
 
         self.suspension_stroke = self.upper_joint_position - self.lower_joint_position
 
-        self.get_mass_vbo()
-        self.get_spring_vbo()
-        self.get_damper_vbo()
-        self.get_actuator_vbo()
-        self.get_dashed_vbo()
+        self.mass_shader.update_vertices(self.mass.update_vertices(x_mass))
+        self.mass_shader.draw(GL_LINE_LOOP)
 
         self.update()
 
@@ -113,186 +545,9 @@ class MassSpringDamperGL(QOpenGLWidget):
         glColor3f(0.5, 0.5, 0.6)
         glLineWidth(2.0)
 
-        glBindVertexArray(self.mass_vao)
-        glDrawArrays(GL_QUADS, 0, 4)
-        glBindVertexArray(0)
-
         # 绘制弹簧
         glColor3f(0.8, 0.4, 0.1)  # Orange-brown
         glLineWidth(2.0)
-
-        glBindVertexArray()
-        glDrawArrays(GL_QUADS, 0, 4)
-        glBindVertexArray(0)
-
-    def get_mass_vbo(self):
-        # mass geometry
-        y_mass = self.mass_position_actual
-        w = self.mass_width
-        h = self.mass_height
-
-        mass_vertices = np.array([-w/2, y_mass,
-                                  -w/2, y_mass + h,
-                                  +w/2, y_mass + h,
-                                  +w/2, y_mass
-                                  ], dtype=np.float32)
-
-        # 使用 glBufferSubData 更新 VBO 中的数据
-        # 必须先绑定 VBO
-        if self.mass_vbo:
-            glBindBuffer(GL_ARRAY_BUFFER, self.mass_vbo)
-            glBufferSubData(GL_ARRAY_BUFFER, 0,
-                            mass_vertices.nbytes, mass_vertices)
-            glBindBuffer(GL_ARRAY_BUFFER, 0)  # 解除绑定
-
-    def get_spring_vbo(self):
-
-        # 弹簧包含两端直线段与中间的弹簧折线段
-        section_height = self.suspension_stroke / 6
-        coil_height = (self.suspension_stroke -
-                       2 * section_height) / self.spring_coils
-
-        vertices = []
-        vertices.append(self.spring_joint_a[0], self.spring_joint_a[1])
-        vertices.append(self.spring_joint_a[0],
-                        self.spring_joint_a[1] + section_height)
-
-        x_direction = 1
-
-        for id in range(self.spring_coils-1):
-            x = self.spring_joint_a[0] + x_direction*self.spring_width/2
-            y = self.spring_joint_a[1] + section_height + coil_height*(id+1)
-            x_direction = -x_direction
-            vertices.append(x, y)
-
-        vertices.append(self.spring_joint_b[0],
-                        self.spring_joint_a[1] + section_height + coil_height*(self.spring_coils))
-        vertices.append(self.spring_joint_b[0], self.spring_joint_b[1])
-
-        spring_vertices = np.array(vertices, dtype=np.float32)
-
-        # 使用 glBufferSubData 更新 VBO 中的数据
-        # 必须先绑定 VBO
-        if self.spring_vbo:
-            glBindBuffer(GL_ARRAY_BUFFER, self.spring_vbo)
-            glBufferSubData(GL_ARRAY_BUFFER, 0,
-                            sizeof(spring_vertices), spring_vertices)
-            glBindBuffer(GL_ARRAY_BUFFER, 0)  # 解除绑定
-
-    def get_damper_vbo(self):
-
-        section_height = (self.suspension_stroke - self.damper_height)/2
-
-        vertices = []
-
-        vertices.append(self.damper_joint_a[0], self.damper_joint_a[1])
-        vertices.append(self.damper_joint_a[0],
-                        self.damper_joint_a[1] + section_height)
-
-        vertices.append(self.damper_joint_a[0] - self.damper_width/2,
-                        self.damper_joint_a[1] + section_height)
-        vertices.append(self.damper_joint_a[0] - self.damper_width/2,
-                        self.damper_joint_a[1] + section_height + self.damper_height)
-
-        vertices.append(self.damper_joint_a[0] + self.damper_width/2,
-                        self.damper_joint_a[1] + section_height)
-        vertices.append(self.damper_joint_a[0] + self.damper_width/2,
-                        self.damper_joint_a[1] + section_height + self.damper_height)
-
-        vertices.append(self.damper_joint_a[0] - self.damper_width/2,
-                        self.damper_joint_a[1] + section_height)
-        vertices.append(self.damper_joint_a[0] + self.damper_width/2,
-                        self.damper_joint_a[1] + section_height)
-
-        vertices.append(self.damper_joint_a[0] - self.damper_width/2,
-                        self.damper_joint_a[1] + section_height + self.damper_thickness)
-        vertices.append(self.damper_joint_a[0] + self.damper_width/2,
-                        self.damper_joint_a[1] + section_height + self.damper_thickness)
-
-        vertices.append(self.damper_joint_a[0],
-                        self.damper_joint_a[1] + section_height + self.damper_thickness)
-        vertices.append(self.damper_joint_b[0], self.damper_joint_b[1])
-        glEnd()
-
-    def get_actuator_vbo(self):
-        # Draw circle
-        actuator_center = self.actuator_joint_a[1] + self.suspension_stroke/2
-
-        vertices = []
-
-        vertices.append(self.actuator_joint_a[0], self.actuator_joint_a[1])
-        vertices.append(self.actuator_joint_a[0],
-                        actuator_center - self.actuator_radius)
-
-        vertices.append(self.actuator_joint_b[0],
-                        actuator_center + self.actuator_radius)
-        vertices.append(self.actuator_joint_b[0], self.actuator_joint_b[1])
-
-        angle = 5 / 4 * np.pi
-        x = self.actuator_joint_a[0] + \
-            self.actuator_radius * np.cos(angle)
-        y = actuator_center + \
-            self.actuator_radius * np.sin(angle)
-        vertices.append(x, y)
-
-        angle = 1 / 4 * np.pi
-        x = self.actuator_joint_a[0] + \
-            self.actuator_radius * np.cos(angle)
-        y = actuator_center + \
-            self.actuator_radius * np.sin(angle)
-        vertices.append(x, y)
-
-        # 绘制箭头
-        arrow_head = np.array([x, y])
-
-        glBegin(GL_LINE_LOOP)
-        vertices.append(x, y)
-
-        angle = 5 / 4 * np.pi - 10 * np.pi / 180
-        x = arrow_head[0] + self.actuator_radius * np.cos(angle)
-        y = arrow_head[1] + self.actuator_radius * np.sin(angle)
-        vertices.append(x, y)
-
-        angle = 5 / 4 * np.pi + 10 * np.pi / 180
-        x = arrow_head[0] + self.actuator_radius * np.cos(angle)
-        y = arrow_head[1] + self.actuator_radius * np.sin(angle)
-        vertices.append(x, y)
-
-        for id in range(36):
-            angle = id * 10 * np.pi / 180
-            x = self.actuator_joint_a[0] + \
-                self.actuator_radius * np.cos(angle)
-            y = actuator_center + \
-                self.actuator_radius * np.sin(angle)
-            vertices.append(x, y)
-
-    def get_base_vbo(self):
-
-        vertices = []
-
-    def get_dashed_vbo(self):
-
-        # 2. 启用虚线模式
-        glEnable(GL_LINE_STIPPLE)
-
-        # 3. 设置虚线样式
-        # 这里我们使用 factor=1，pattern=0xAAAA
-        # 0xAAAA (二进制 1010 1010 1010 1010) 会产生一个等长的点-空隙模式
-        glLineStipple(5, 0xAAAA)
-
-        wb = self.base_width
-
-        vertices = []
-
-        vertices.append(-wb/2 - 10, self.base_position_init)
-        vertices.append(+wb/2 + 10, self.base_position_init)
-
-        vertices.append(-wb/2 - 10, self.mass_position_init +
-                        self.mass_height/2)
-        vertices.append(+wb/2 + 10, self.mass_position_init +
-                        self.mass_height/2)
-
-        glDisable(GL_LINE_STIPPLE)
 
 
 class MainWindow(QMainWindow):
