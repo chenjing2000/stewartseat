@@ -15,14 +15,15 @@ import numpy as np
 import control as ct
 
 from MSDModel import MSDPlant, PIDController, MassSpringDamperGL
+from MSDChart import BodeWindow, TimeWindow
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("质量-阻尼-弹簧仿真系统")
-        self.setFixedSize(800, 700)
-        self.move(100, 100)
+        self.setFixedSize(420, 700)
+        self.move(200, 100)
 
         # Main components
         self.msd = MSDPlant(mass=10.0, damping=1.0, stiffness=10.0)
@@ -109,8 +110,6 @@ class MainWindow(QMainWindow):
         layout_left.addWidget(self.pidset_group)
 
         main_layout.addLayout(layout_left)
-
-        layout_right = QVBoxLayout()
 
         # 仿真设置
         self.simulation_group = QGroupBox("仿真设置")
@@ -217,46 +216,6 @@ class MainWindow(QMainWindow):
         self.status_label = QLabel("Ready.")
         layout_left.addWidget(self.status_label)
 
-        # Plotting widget
-        self.plot_widget_1 = pg.PlotWidget()
-        self.plot_widget_1.setTitle("Position vs. Time", color='black')
-        self.plot_widget_1.setLabel('left', 'Position (m)', color='black')
-        self.plot_widget_1.setLabel('bottom', 'Time (s)', color='black')
-        self.plot_widget_1.setBackground('white')
-        self.plot_widget_1.getAxis('left').setPen('black')  # 设置轴线颜色
-        self.plot_widget_1.getAxis('bottom').setPen('black')  # 设置轴线颜色
-        self.plot_curve_11 = self.plot_widget_1.plot(
-            [], [], pen=pg.mkPen(color='b', width=2), name='excitation')
-        self.plot_curve_12 = self.plot_widget_1.plot(
-            [], [], pen=pg.mkPen(color='r', width=2), name='displacement')
-        layout_right.addWidget(self.plot_widget_1, 1)
-
-        self.plot_widget_2 = pg.PlotWidget()
-        self.plot_widget_2.setTitle("Acceleration vs. Time", color='black')
-        self.plot_widget_2.setLabel(
-            'left', 'Acceleration (m/s^2)', color='black')
-        self.plot_widget_2.setLabel('bottom', 'Time (s)', color='black')
-        self.plot_widget_2.setBackground('white')
-        self.plot_widget_2.getAxis('left').setPen('black')  # 设置轴线颜色
-        self.plot_widget_2.getAxis('bottom').setPen('black')  # 设置轴线颜色
-        self.plot_curve_2 = self.plot_widget_2.plot(
-            [], [], pen=pg.mkPen(color='b', width=2))
-        layout_right.addWidget(self.plot_widget_2, 1)
-
-        self.plot_widget_3 = pg.PlotWidget()
-        self.plot_widget_3.setTitle("Actuator Force vs. Time", color='black')
-        self.plot_widget_3.setLabel(
-            'left', 'Actuator Force (N)', color='black')
-        self.plot_widget_3.setLabel('bottom', 'Time (s)', color='black')
-        self.plot_widget_3.setBackground('white')
-        self.plot_widget_3.getAxis('left').setPen('black')  # 设置轴线颜色
-        self.plot_widget_3.getAxis('bottom').setPen('black')  # 设置轴线颜色
-        self.plot_curve_3 = self.plot_widget_3.plot(
-            [], [], pen=pg.mkPen(color='b', width=2))
-        layout_right.addWidget(self.plot_widget_3, 1)
-
-        main_layout.addLayout(layout_right)
-
         self._apply_styles()
 
         # 定时器
@@ -264,10 +223,13 @@ class MainWindow(QMainWindow):
         self.timer.setInterval(5)  # 每 5 毫秒触发一次
         self.timer.timeout.connect(self.update_simulation)
 
+        self.time_window = None
+        self.bode_window = None
+
     def btn_show_info_clicked(self):
         dialog = QDialog(self)
         dialog.setWindowTitle("基本信息")
-        dialog.setFixedSize(300, 120)
+        dialog.setFixedSize(300, 160)
 
         layout = QVBoxLayout()
 
@@ -313,25 +275,92 @@ class MainWindow(QMainWindow):
         layout.addWidget(label2)
         layout.addWidget(label3)
 
-        self.control_type = self.sim_comboboxes[1].currentIndex()
+        Gs = ct.TransferFunction([c, k], [m, c, k])
 
+        kp = float(self.pid_params_boxes[0].text())
+        ki = float(self.pid_params_boxes[1].text())
+        kd = float(self.pid_params_boxes[2].text())
+
+        self.control_type = self.sim_comboboxes[1].currentIndex()
         if self.control_type == 0:
-            pass
+            Gk = ct.TransferFunction([c, k, 0], [m, c + kd, k + kp, ki])
+        elif self.control_type == 1:
+            Gk = ct.TransferFunction([c, k], [m + kd, c + kp, k + ki])
+        elif self.control_type == 2:
+            Gk = ct.TransferFunction([c, k], [kd, m + kp, c + ki, k])
         else:
-            pass
+            Gk = ct.TransferFunction([c, k], [m, c, k])
+
+        poles = ct.poles(Gs)
+
+        poles_str = ", ".join(
+            [f"{p.real:.2f}{'+' if p.imag>=0 else ''}{p.imag:.2f}j" for p in poles])
+        label4 = QLabel(f"poles = [{poles_str}].")
+
+        poles = ct.poles(Gk)
+
+        poles_str = ", ".join(
+            [f"{p.real:.2f}{'+' if p.imag>=0 else ''}{p.imag:.2f}j" for p in poles])
+        label5 = QLabel(f"poles = [{poles_str}].")
+
+        layout.addWidget(label4)
+        layout.addWidget(label5)
 
         dialog.setLayout(layout)
         dialog.exec()  # 阻塞式弹出
 
     def btn_bodeplot_clicked(self):
 
-        self.msd.m = float(self.msd_params_boxes[0].text())
-        self.msd.c = float(self.msd_params_boxes[1].text())
-        self.msd.k = float(self.msd_params_boxes[2].text())
+        m = float(self.msd_params_boxes[0].text())
+        c = float(self.msd_params_boxes[1].text())
+        k = float(self.msd_params_boxes[2].text())
 
-        self.pid.kp = float(self.pid_params_boxes[0].text())
-        self.pid.ki = float(self.pid_params_boxes[1].text())
-        self.pid.kd = float(self.pid_params_boxes[2].text())
+        kp = float(self.pid_params_boxes[0].text())
+        ki = float(self.pid_params_boxes[1].text())
+        kd = float(self.pid_params_boxes[2].text())
+
+        Gs = ct.TransferFunction([c, k], [m, c, k])
+        mag, phase, omega = ct.bode(
+            Gs, dB=True, Hz=False, omega_limits=(0.1, 100), omega_num=500, plot=False)
+
+        if self.bode_window is not None:
+            self.bode_window.close()
+
+        self.bode_window = BodeWindow()
+        self.bode_window.plot_curve_11.setData(omega, 20*np.log10(mag))
+        self.bode_window.plot_curve_12.setData(omega, 20*np.log10(mag * omega))
+        self.bode_window.plot_curve_13.setData(
+            omega, 20*np.log10(mag * omega ** 2))
+
+        self.bode_window.plot_curve_21.setData(omega, phase)
+        self.bode_window.plot_curve_22.setData(omega, phase + np.pi/2)
+        self.bode_window.plot_curve_23.setData(omega, phase + np.pi)
+
+        self.control_type = self.sim_comboboxes[1].currentIndex()
+        if self.control_type == 0:
+            Gk = ct.TransferFunction([c, k, 0], [m, c + kd, k + kp, ki])
+        elif self.control_type == 1:
+            Gk = ct.TransferFunction([c, k], [m + kd, c + kp, k + ki])
+        elif self.control_type == 2:
+            Gk = ct.TransferFunction([c, k], [kd, m + kp, c + ki, k])
+        else:
+            Gk = ct.TransferFunction([c, k], [m, c, k])
+
+        magk, phasek, omegak = ct.bode(
+            Gk, dB=True, Hz=False, omega_limits=(0.1, 100), omega_num=500, plot=False)
+        self.bode_window.plot_curve_31.setData(omega, 20*np.log10(mag))
+        self.bode_window.plot_curve_32.setData(omegak, 20*np.log10(magk))
+
+    def closeEvent(self, event):
+        # 主窗口关闭前，先关闭子窗口
+
+        if self.time_window is not None:
+            self.time_window.close()
+
+        if self.bode_window is not None:
+            self.bode_window.close()
+
+        super().closeEvent(event)
 
     def system_params_initilization(self):
 
@@ -388,14 +417,18 @@ class MainWindow(QMainWindow):
         self.a_series = np.zeros(nt, dtype=float)
         self.f_series = np.zeros(nt, dtype=float)
 
-        self.plot_curve_11.setData([], [])
-        self.plot_curve_12.setData([], [])
-        self.plot_curve_2.setData([], [])
-        self.plot_curve_3.setData([], [])
+        if self.time_window is not None:
+            self.time_window.close()
 
-        self.plot_widget_1.setXRange(0, self.time_stop)
-        self.plot_widget_2.setXRange(0, self.time_stop)
-        self.plot_widget_3.setXRange(0, self.time_stop)
+        self.time_window = TimeWindow()
+        self.time_window.plot_curve_11.setData([], [])
+        self.time_window.plot_curve_12.setData([], [])
+        self.time_window.plot_curve_2.setData([], [])
+        self.time_window.plot_curve_3.setData([], [])
+
+        self.time_window.plot_widget_1.setXRange(0, self.time_stop)
+        self.time_window.plot_widget_2.setXRange(0, self.time_stop)
+        self.time_window.plot_widget_3.setXRange(0, self.time_stop)
 
     def btn_simulate_clicked(self):
 
@@ -427,10 +460,14 @@ class MainWindow(QMainWindow):
             self.f_series[id] = force
 
         if len(self.x_series) > 0:
-            self.plot_curve_11.setData(self.time[:-1], self.excitation[:-1])
-            self.plot_curve_12.setData(self.time[:-1], self.x_series[:-1])
-            self.plot_curve_2.setData(self.time[:-1], self.a_series[:-1])
-            self.plot_curve_3.setData(self.time[:-1], self.f_series[:-1])
+            self.time_window.plot_curve_11.setData(
+                self.time[:-1], self.excitation[:-1])
+            self.time_window.plot_curve_12.setData(
+                self.time[:-1], self.x_series[:-1])
+            self.time_window.plot_curve_2.setData(
+                self.time[:-1], self.a_series[:-1])
+            self.time_window.plot_curve_3.setData(
+                self.time[:-1], self.f_series[:-1])
 
         self.status_label.setText("Simulation stops.")
 
@@ -482,11 +519,14 @@ class MainWindow(QMainWindow):
 
         if id % 20 == 0:
             # 更新Pyqtgraph曲线（使用整个数据历史）
-            self.plot_curve_11.setData(
+            self.time_window.plot_curve_11.setData(
                 self.time[:id+1], self.excitation[:id+1])
-            self.plot_curve_12.setData(self.time[:id+1], self.x_series[:id+1])
-            self.plot_curve_2.setData(self.time[:id+1], self.a_series[:id+1])
-            self.plot_curve_3.setData(self.time[:id+1], self.f_series[:id+1])
+            self.time_window.plot_curve_12.setData(
+                self.time[:id+1], self.x_series[:id+1])
+            self.time_window.plot_curve_2.setData(
+                self.time[:id+1], self.a_series[:id+1])
+            self.time_window.plot_curve_3.setData(
+                self.time[:id+1], self.f_series[:id+1])
 
         # 更新OpenGL绘图
         self.msdviz.mass_motion = self.msd.x
