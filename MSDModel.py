@@ -582,7 +582,7 @@ class PartActuator():
 class MassSpringDamperGL(QOpenGLWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedSize(400, 400)
+        self.setFixedSize(400, 330)
         # 视觉比例：把位移（米）映射到屏幕（单位坐标）
         self.meter_to_screen = 30  # 1 m -> 30 px（在内部用归一化再缩放）
 

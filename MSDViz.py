@@ -5,24 +5,27 @@ from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget,
                                QVBoxLayout, QHBoxLayout, QLabel,
                                QGroupBox, QLineEdit, QLabel,
-                               QComboBox, QPushButton, QDialog)
+                               QComboBox, QPushButton, QDialog,
+                               QCheckBox, QFileDialog, QTabWidget)
 import pyqtgraph as pg
-from PySide6.QtGui import QPalette, QColor, QDoubleValidator
+from PySide6.QtGui import (QPalette, QColor, QDoubleValidator,
+                           QIntValidator, QFontMetrics)
 from PySide6.QtCore import QTimer, Signal
 from OpenGL.GL import *
 
 import numpy as np
 import control as ct
 
-from MSDModel import MSDPlant, PIDController, MassSpringDamperGL
+from MSDModel import *
 from MSDChart import *
+from MSDTabs import *
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("质量-阻尼-弹簧仿真系统")
-        self.setFixedSize(420, 700)
+        self.setWindowTitle("质量-阻尼-弹簧控制系统")
+        self.setFixedSize(420, 730)
         self.move(200, 100)
 
         # Main components
@@ -47,12 +50,19 @@ class MainWindow(QMainWindow):
         # --- UI Setup ---
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        main_layout = QHBoxLayout(central_widget)
+        main_layout = QVBoxLayout(central_widget)
 
-        # Left side: OpenGL widget
-        layout_left = QVBoxLayout()
         self.msdviz = MassSpringDamperGL()
-        layout_left.addWidget(self.msdviz, 2)  # Take up 2/3 of the space
+        main_layout.addWidget(self.msdviz, 2)  # Take up 2/3 of the space
+
+        self.tabpages = QTabWidget()
+        self.tabpage1 = QWidget()
+        self.tabpage2 = TabPage2()
+
+        self.tabpages.addTab(self.tabpage1, "基础控制")
+        self.tabpages.addTab(self.tabpage2, "传递函数")
+
+        tabpage1_layout = QVBoxLayout(self.tabpage1)
 
         # 基本参数设置
         self.params_group = QGroupBox("MSD Parameters")
@@ -78,7 +88,7 @@ class MainWindow(QMainWindow):
 
             # 设置只能输入正数（整数或浮点数）
             validator = QDoubleValidator(
-                0.0, 1e9, 3, self)  # 范围 [0, 1e9]，小数点后6位
+                0.0, 1e9, 2)  # 范围 [0, 1e9]，小数点后2位
             validator.setNotation(QDoubleValidator.StandardNotation)
             value_box.setValidator(validator)
 
@@ -86,30 +96,73 @@ class MainWindow(QMainWindow):
 
             self.msd_params_boxes.append(value_box)
 
-        layout_left.addWidget(self.params_group)
+        tabpage1_layout.addWidget(self.params_group)
 
         # PID 参数设置
         self.pidset_group = QGroupBox("PID Parameters")
-        self.pidset_layout = QHBoxLayout(self.pidset_group)
+        control_layout = QVBoxLayout(self.pidset_group)
+        pidset_layout = QHBoxLayout()
 
         default_pid = {"kp:": 1.0, "ki:": 0.0, "kd:": 0.0}
-        self.pid_params_boxes = []
+        self.ctrl_boxes = []
+        self.ctrl_comboboxes = []
 
         for id, (key, value) in enumerate(default_pid.items()):
             key_label = QLabel(key)
             key_label.setFixedWidth(50)
-            self.pidset_layout.addWidget(key_label)
+            pidset_layout.addWidget(key_label)
 
             value_box = QLineEdit(str(value))
             value_box.setMaximumWidth(100)
             value_box.setAlignment(Qt.AlignmentFlag.AlignRight)
-            self.pidset_layout.addWidget(value_box)
+            pidset_layout.addWidget(value_box)
 
-            self.pid_params_boxes.append(value_box)
+            self.ctrl_boxes.append(value_box)
 
-        layout_left.addWidget(self.pidset_group)
+        control_layout.addLayout(pidset_layout)
 
-        main_layout.addLayout(layout_left)
+        target_layout = QHBoxLayout()
+
+        key_label = QLabel("对象")
+        key_label.setFixedWidth(50)
+        target_layout.addWidget(key_label, 1)
+
+        combox = QComboBox()
+        combox.addItems(["位移", "速度", "加速度", "无"])
+        combox.setMinimumWidth(67)
+        combox.setCurrentIndex(3)
+        target_layout.addWidget(combox, 1)
+
+        self.ctrl_comboboxes.append(combox)
+
+        self.control_type = combox.currentIndex()
+
+        key_label = QLabel("目标值")
+        key_label.setFixedWidth(50)
+        target_layout.addWidget(key_label, 1)
+
+        value_box = QLineEdit("0.0")
+        value_box.setMaximumWidth(100)
+        value_box.setAlignment(Qt.AlignmentFlag.AlignRight)
+        target_layout.addWidget(value_box, 1)
+
+        self.ctrl_boxes.append(value_box)
+
+        self.target_value = float(value_box.text())
+
+        btn_bodeplot = QPushButton("bode")
+        btn_bodeplot.clicked.connect(self.btn_bodeplot_clicked)
+        target_layout.addWidget(btn_bodeplot, 1)
+
+        btn_nyquistplot = QPushButton("nyquist")
+        btn_nyquistplot.clicked.connect(self.btn_nyquistplot_clicked)
+        target_layout.addWidget(btn_nyquistplot, 1)
+
+        control_layout.addLayout(target_layout)
+
+        tabpage1_layout.addWidget(self.pidset_group)
+
+        main_layout.addWidget(self.tabpages)
 
         # 仿真设置
         self.simulation_group = QGroupBox("仿真设置")
@@ -167,32 +220,28 @@ class MainWindow(QMainWindow):
 
         self.time_stop = float(value_box.text())
 
-        key_label = QLabel("对象")
+        key_check = QCheckBox("导入")
+        key_check.setFixedWidth(50)
+        simulation_layout_2.addWidget(key_check)
+
+        btn_input = QPushButton("选择文件")
+        btn_input.clicked.connect(self.btn_input_clicked)
+        simulation_layout_2.addWidget(btn_input)
+
+        key_label = QLabel("忽略行数")
         key_label.setFixedWidth(50)
         simulation_layout_2.addWidget(key_label)
 
-        combox = QComboBox()
-        combox.addItems(["位移", "速度", "加速度", "无"])
-        combox.setMinimumWidth(67)
-        combox.setCurrentIndex(3)
-        simulation_layout_2.addWidget(combox)
-
-        self.sim_comboboxes.append(combox)
-
-        self.control_type = combox.currentIndex()
-
-        key_label = QLabel("目标值")
-        key_label.setFixedWidth(50)
-        simulation_layout_2.addWidget(key_label)
-
-        value_box = QLineEdit("0.0")
+        value_box = QLineEdit("3")
+        value_box.setValidator(QIntValidator(0, 30))
         value_box.setMaximumWidth(100)
         value_box.setAlignment(Qt.AlignmentFlag.AlignRight)
         simulation_layout_2.addWidget(value_box)
 
         self.sim_boxes.append(value_box)
 
-        self.target_value = float(value_box.text())
+        self.sim_checkboxes = []
+        self.sim_checkboxes.append(key_check)
 
         simulation_layout_3 = QHBoxLayout()
 
@@ -204,21 +253,13 @@ class MainWindow(QMainWindow):
         btn_animate.clicked.connect(self.btn_animate_clicked)
         simulation_layout_3.addWidget(btn_animate)
 
-        btn_bodeplot = QPushButton("bode chart")
-        btn_bodeplot.clicked.connect(self.btn_bodeplot_clicked)
-        simulation_layout_3.addWidget(btn_bodeplot)
-
-        btn_nyquistplot = QPushButton("nyquist")
-        btn_nyquistplot.clicked.connect(self.btn_nyquistplot_clicked)
-        simulation_layout_3.addWidget(btn_nyquistplot)
-
         self.simulation_layout.addLayout(simulation_layout_1)
         self.simulation_layout.addLayout(simulation_layout_2)
         self.simulation_layout.addLayout(simulation_layout_3)
-        layout_left.addWidget(self.simulation_group)
+        tabpage1_layout.addWidget(self.simulation_group)
 
         self.status_label = QLabel("Ready.")
-        layout_left.addWidget(self.status_label)
+        main_layout.addWidget(self.status_label)
 
         self._apply_styles()
 
@@ -282,11 +323,11 @@ class MainWindow(QMainWindow):
 
         Gs = ct.TransferFunction([c, k], [m, c, k])
 
-        kp = float(self.pid_params_boxes[0].text())
-        ki = float(self.pid_params_boxes[1].text())
-        kd = float(self.pid_params_boxes[2].text())
+        kp = float(self.ctrl_boxes[0].text())
+        ki = float(self.ctrl_boxes[1].text())
+        kd = float(self.ctrl_boxes[2].text())
 
-        self.control_type = self.sim_comboboxes[1].currentIndex()
+        self.control_type = self.ctrl_comboboxes[0].currentIndex()
         if self.control_type == 0:
             Gk = ct.TransferFunction([c, k, 0], [m, c + kd, k + kp, ki])
         elif self.control_type == 1:
@@ -315,6 +356,22 @@ class MainWindow(QMainWindow):
         dialog.setLayout(layout)
         dialog.exec()  # 阻塞式弹出
 
+    def btn_input_clicked(self):
+
+        file_name, _ = QFileDialog.getOpenFileName(
+            self,
+            "选择文件",
+            "C:\\",  # 初始路径，可以写 "C:/"
+            "文本文件 (*.txt);;CSV 文件 (*.csv)"
+        )
+
+        if file_name:
+            # 限定显示长度（比如 label 宽度）
+            metrics = QFontMetrics(self.status_label.font())
+            file_name_short = metrics.elidedText(
+                file_name, Qt.ElideMiddle, self.status_label.width())
+            self.status_label.setText(file_name_short)
+
     def system_params_initilization(self):
 
         self.msd.m = float(self.msd_params_boxes[0].text())
@@ -325,9 +382,9 @@ class MainWindow(QMainWindow):
         self.msd.v = 0.0
         self.msd.a = 0.0
 
-        self.pid.kp = float(self.pid_params_boxes[0].text())
-        self.pid.ki = float(self.pid_params_boxes[1].text())
-        self.pid.kd = float(self.pid_params_boxes[2].text())
+        self.pid.kp = float(self.ctrl_boxes[0].text())
+        self.pid.ki = float(self.ctrl_boxes[1].text())
+        self.pid.kd = float(self.ctrl_boxes[2].text())
 
         self.time_stop = float(self.sim_boxes[2].text())
         self.step_now = 0
@@ -348,7 +405,6 @@ class MainWindow(QMainWindow):
             signal[step_start:] = amplitude
 
         elif signal_type == 2:  # sine
-            print(f"omega = {float(self.sim_boxes[1].text()):.2f}")
             omega = 2 * np.pi * float(self.sim_boxes[1].text())
             signal = amplitude * np.sin(omega * self.time)
 
@@ -361,10 +417,13 @@ class MainWindow(QMainWindow):
             step_stop = int((0.1 + impulse_time_period) / dt)
             signal[step_start:step_stop] = amplitude
 
+        if self.sim_checkboxes[0].isChecked():
+            self.status_label.setText("外部导入文件方法尚未完成。")
+
         self.excitation = signal
 
-        self.control_type = self.sim_comboboxes[1].currentIndex()
-        self.target_value = float(self.sim_boxes[3].text())
+        self.control_type = self.ctrl_comboboxes[0].currentIndex()
+        self.target_value = float(self.ctrl_boxes[3].text())
 
         self.x_series = np.zeros(nt, dtype=float)
         self.v_series = np.zeros(nt, dtype=float)
@@ -498,13 +557,13 @@ class MainWindow(QMainWindow):
         c = float(self.msd_params_boxes[1].text())
         k = float(self.msd_params_boxes[2].text())
 
-        kp = float(self.pid_params_boxes[0].text())
-        ki = float(self.pid_params_boxes[1].text())
-        kd = float(self.pid_params_boxes[2].text())
+        kp = float(self.ctrl_boxes[0].text())
+        ki = float(self.ctrl_boxes[1].text())
+        kd = float(self.ctrl_boxes[2].text())
 
         Gs = ct.TransferFunction([c, k], [m, c, k])
-        mag, phase, omega = ct.bode(
-            Gs, dB=True, Hz=False, omega_limits=(0.1, 100), omega_num=500, plot=False)
+
+        mag, phase, omega = ct.frequency_response(Gs)
 
         if self.bode_window is not None:
             self.bode_window.close()
@@ -519,7 +578,7 @@ class MainWindow(QMainWindow):
         self.bode_window.plot_curve_22.setData(omega, phase + np.pi/2)
         self.bode_window.plot_curve_23.setData(omega, phase + np.pi)
 
-        self.control_type = self.sim_comboboxes[1].currentIndex()
+        self.control_type = self.ctrl_comboboxes[0].currentIndex()
         if self.control_type == 0:
             Gk = ct.TransferFunction([c, k, 0], [m, c + kd, k + kp, ki])
         elif self.control_type == 1:
@@ -529,8 +588,8 @@ class MainWindow(QMainWindow):
         else:
             Gk = ct.TransferFunction([c, k], [m, c, k])
 
-        magk, phasek, omegak = ct.bode(
-            Gk, dB=True, Hz=False, omega_limits=(0.1, 100), omega_num=500, plot=False)
+        magk, phasek, omegak = ct.frequency_response(Gk)
+
         self.bode_window.plot_curve_31.setData(omega, 20*np.log10(mag))
         self.bode_window.plot_curve_32.setData(omegak, 20*np.log10(magk))
 
@@ -554,9 +613,9 @@ class MainWindow(QMainWindow):
         c = float(self.msd_params_boxes[1].text())
         k = float(self.msd_params_boxes[2].text())
 
-        kp = float(self.pid_params_boxes[0].text())
-        ki = float(self.pid_params_boxes[1].text())
-        kd = float(self.pid_params_boxes[2].text())
+        kp = float(self.ctrl_boxes[0].text())
+        ki = float(self.ctrl_boxes[1].text())
+        kd = float(self.ctrl_boxes[2].text())
 
         Gs = ct.TransferFunction([c, k], [m, c, k])
 
@@ -575,7 +634,7 @@ class MainWindow(QMainWindow):
         ydata = np.concatenate([-imagpart[::-1], imagpart])
         self.nyquist_window.plot_curve_12.setData(xdata, ydata)
 
-        self.control_type = self.sim_comboboxes[1].currentIndex()
+        self.control_type = self.ctrl_comboboxes[0].currentIndex()
         if self.control_type == 0:
             Gk = ct.TransferFunction([c, k, 0], [m, c + kd, k + kp, ki])
         elif self.control_type == 1:
@@ -627,6 +686,32 @@ class MainWindow(QMainWindow):
             }
             QLabel {
                 padding: 2px 0;
+            }
+            /* 整个 TabWidget 背景 */
+            QTabWidget::pane {
+                border: 1px solid #d0d0d0;
+                border-radius: 8px;
+                padding: 0px;
+            }
+            /* Tab bar 区域 */
+            QTabBar::tab {
+                border: 1px soild #d0d0d0;
+                padding: 6px 10px;
+                margin: 2px;
+                color: #333;
+                font-size: 14px;
+                border-radius: 6px;
+            }
+            /* 被选中的 Tab */
+            QTabBar::tab:selected {
+                background: #0078d4;   /* Windows 11 蓝 */
+                color: white;
+            }
+
+            /* 未选中时 */
+            QTabBar::tab:!selected {
+                background: transparent;
+                color: #444;
             }
         """)
 

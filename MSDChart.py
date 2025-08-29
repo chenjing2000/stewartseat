@@ -147,7 +147,7 @@ class NyquistWindow(QWidget):
         self.plot_widget_1.getAxis('bottom').setPen('black')  # 设置轴线颜色
         self.plot_widget_1.addLegend(labelTextColor='blue')
         self.plot_curve_11 = self.plot_widget_1.plot(
-            [], [], pen=None, symbol="+", name='critical point')
+            [], [], pen=None, symbol="+", name='(-1,j0)')
         self.plot_curve_12 = self.plot_widget_1.plot(
             [], [], pen=pg.mkPen(color='r', width=2), name='uncontrol')
         self.plot_curve_13 = self.plot_widget_1.plot(
