@@ -15,7 +15,7 @@ import numpy as np
 import control as ct
 
 from MSDModel import MSDPlant, PIDController, MassSpringDamperGL
-from MSDChart import BodeWindow, TimeWindow
+from MSDChart import *
 
 
 class MainWindow(QMainWindow):
@@ -196,10 +196,6 @@ class MainWindow(QMainWindow):
 
         simulation_layout_3 = QHBoxLayout()
 
-        btn_bodeplot = QPushButton("bode chart")
-        btn_bodeplot.clicked.connect(self.btn_bodeplot_clicked)
-        simulation_layout_3.addWidget(btn_bodeplot)
-
         btn_simulate = QPushButton("simulate")
         btn_simulate.clicked.connect(self.btn_simulate_clicked)
         simulation_layout_3.addWidget(btn_simulate)
@@ -207,6 +203,14 @@ class MainWindow(QMainWindow):
         btn_animate = QPushButton("animate")
         btn_animate.clicked.connect(self.btn_animate_clicked)
         simulation_layout_3.addWidget(btn_animate)
+
+        btn_bodeplot = QPushButton("bode chart")
+        btn_bodeplot.clicked.connect(self.btn_bodeplot_clicked)
+        simulation_layout_3.addWidget(btn_bodeplot)
+
+        btn_nyquistplot = QPushButton("nyquist")
+        btn_nyquistplot.clicked.connect(self.btn_nyquistplot_clicked)
+        simulation_layout_3.addWidget(btn_nyquistplot)
 
         self.simulation_layout.addLayout(simulation_layout_1)
         self.simulation_layout.addLayout(simulation_layout_2)
@@ -225,11 +229,12 @@ class MainWindow(QMainWindow):
 
         self.time_window = None
         self.bode_window = None
+        self.nyquist_window = None
 
     def btn_show_info_clicked(self):
         dialog = QDialog(self)
         dialog.setWindowTitle("基本信息")
-        dialog.setFixedSize(300, 160)
+        dialog.setFixedSize(300, 200)
 
         layout = QVBoxLayout()
 
@@ -291,6 +296,7 @@ class MainWindow(QMainWindow):
         else:
             Gk = ct.TransferFunction([c, k], [m, c, k])
 
+        # 传递函数极点
         poles = ct.poles(Gs)
 
         poles_str = ", ".join(
@@ -301,66 +307,13 @@ class MainWindow(QMainWindow):
 
         poles_str = ", ".join(
             [f"{p.real:.2f}{'+' if p.imag>=0 else ''}{p.imag:.2f}j" for p in poles])
-        label5 = QLabel(f"poles = [{poles_str}].")
+        label5 = QLabel(f"poles = [{poles_str}] for controlled.")
 
         layout.addWidget(label4)
         layout.addWidget(label5)
 
         dialog.setLayout(layout)
         dialog.exec()  # 阻塞式弹出
-
-    def btn_bodeplot_clicked(self):
-
-        m = float(self.msd_params_boxes[0].text())
-        c = float(self.msd_params_boxes[1].text())
-        k = float(self.msd_params_boxes[2].text())
-
-        kp = float(self.pid_params_boxes[0].text())
-        ki = float(self.pid_params_boxes[1].text())
-        kd = float(self.pid_params_boxes[2].text())
-
-        Gs = ct.TransferFunction([c, k], [m, c, k])
-        mag, phase, omega = ct.bode(
-            Gs, dB=True, Hz=False, omega_limits=(0.1, 100), omega_num=500, plot=False)
-
-        if self.bode_window is not None:
-            self.bode_window.close()
-
-        self.bode_window = BodeWindow()
-        self.bode_window.plot_curve_11.setData(omega, 20*np.log10(mag))
-        self.bode_window.plot_curve_12.setData(omega, 20*np.log10(mag * omega))
-        self.bode_window.plot_curve_13.setData(
-            omega, 20*np.log10(mag * omega ** 2))
-
-        self.bode_window.plot_curve_21.setData(omega, phase)
-        self.bode_window.plot_curve_22.setData(omega, phase + np.pi/2)
-        self.bode_window.plot_curve_23.setData(omega, phase + np.pi)
-
-        self.control_type = self.sim_comboboxes[1].currentIndex()
-        if self.control_type == 0:
-            Gk = ct.TransferFunction([c, k, 0], [m, c + kd, k + kp, ki])
-        elif self.control_type == 1:
-            Gk = ct.TransferFunction([c, k], [m + kd, c + kp, k + ki])
-        elif self.control_type == 2:
-            Gk = ct.TransferFunction([c, k], [kd, m + kp, c + ki, k])
-        else:
-            Gk = ct.TransferFunction([c, k], [m, c, k])
-
-        magk, phasek, omegak = ct.bode(
-            Gk, dB=True, Hz=False, omega_limits=(0.1, 100), omega_num=500, plot=False)
-        self.bode_window.plot_curve_31.setData(omega, 20*np.log10(mag))
-        self.bode_window.plot_curve_32.setData(omegak, 20*np.log10(magk))
-
-    def closeEvent(self, event):
-        # 主窗口关闭前，先关闭子窗口
-
-        if self.time_window is not None:
-            self.time_window.close()
-
-        if self.bode_window is not None:
-            self.bode_window.close()
-
-        super().closeEvent(event)
 
     def system_params_initilization(self):
 
@@ -395,6 +348,7 @@ class MainWindow(QMainWindow):
             signal[step_start:] = amplitude
 
         elif signal_type == 2:  # sine
+            print(f"omega = {float(self.sim_boxes[1].text()):.2f}")
             omega = 2 * np.pi * float(self.sim_boxes[1].text())
             signal = amplitude * np.sin(omega * self.time)
 
@@ -461,9 +415,9 @@ class MainWindow(QMainWindow):
 
         if len(self.x_series) > 0:
             self.time_window.plot_curve_11.setData(
-                self.time[:-1], self.excitation[:-1])
-            self.time_window.plot_curve_12.setData(
                 self.time[:-1], self.x_series[:-1])
+            self.time_window.plot_curve_12.setData(
+                self.time[:-1], self.excitation[:-1])
             self.time_window.plot_curve_2.setData(
                 self.time[:-1], self.a_series[:-1])
             self.time_window.plot_curve_3.setData(
@@ -520,9 +474,9 @@ class MainWindow(QMainWindow):
         if id % 20 == 0:
             # 更新Pyqtgraph曲线（使用整个数据历史）
             self.time_window.plot_curve_11.setData(
-                self.time[:id+1], self.excitation[:id+1])
-            self.time_window.plot_curve_12.setData(
                 self.time[:id+1], self.x_series[:id+1])
+            self.time_window.plot_curve_12.setData(
+                self.time[:id+1], self.excitation[:id+1])
             self.time_window.plot_curve_2.setData(
                 self.time[:id+1], self.a_series[:id+1])
             self.time_window.plot_curve_3.setData(
@@ -537,6 +491,108 @@ class MainWindow(QMainWindow):
         # 更新时间步
         self.step_now += 1
         self.time_now += self.dt
+
+    def btn_bodeplot_clicked(self):
+
+        m = float(self.msd_params_boxes[0].text())
+        c = float(self.msd_params_boxes[1].text())
+        k = float(self.msd_params_boxes[2].text())
+
+        kp = float(self.pid_params_boxes[0].text())
+        ki = float(self.pid_params_boxes[1].text())
+        kd = float(self.pid_params_boxes[2].text())
+
+        Gs = ct.TransferFunction([c, k], [m, c, k])
+        mag, phase, omega = ct.bode(
+            Gs, dB=True, Hz=False, omega_limits=(0.1, 100), omega_num=500, plot=False)
+
+        if self.bode_window is not None:
+            self.bode_window.close()
+
+        self.bode_window = BodeWindow()
+        self.bode_window.plot_curve_11.setData(omega, 20*np.log10(mag))
+        self.bode_window.plot_curve_12.setData(omega, 20*np.log10(mag * omega))
+        self.bode_window.plot_curve_13.setData(
+            omega, 20*np.log10(mag * omega ** 2))
+
+        self.bode_window.plot_curve_21.setData(omega, phase)
+        self.bode_window.plot_curve_22.setData(omega, phase + np.pi/2)
+        self.bode_window.plot_curve_23.setData(omega, phase + np.pi)
+
+        self.control_type = self.sim_comboboxes[1].currentIndex()
+        if self.control_type == 0:
+            Gk = ct.TransferFunction([c, k, 0], [m, c + kd, k + kp, ki])
+        elif self.control_type == 1:
+            Gk = ct.TransferFunction([c, k], [m + kd, c + kp, k + ki])
+        elif self.control_type == 2:
+            Gk = ct.TransferFunction([c, k], [kd, m + kp, c + ki, k])
+        else:
+            Gk = ct.TransferFunction([c, k], [m, c, k])
+
+        magk, phasek, omegak = ct.bode(
+            Gk, dB=True, Hz=False, omega_limits=(0.1, 100), omega_num=500, plot=False)
+        self.bode_window.plot_curve_31.setData(omega, 20*np.log10(mag))
+        self.bode_window.plot_curve_32.setData(omegak, 20*np.log10(magk))
+
+    def closeEvent(self, event):
+        # 主窗口关闭前，先关闭子窗口
+
+        if self.time_window is not None:
+            self.time_window.close()
+
+        if self.bode_window is not None:
+            self.bode_window.close()
+
+        if self.nyquist_window is not None:
+            self.nyquist_window.close()
+
+        super().closeEvent(event)
+
+    def btn_nyquistplot_clicked(self):
+
+        m = float(self.msd_params_boxes[0].text())
+        c = float(self.msd_params_boxes[1].text())
+        k = float(self.msd_params_boxes[2].text())
+
+        kp = float(self.pid_params_boxes[0].text())
+        ki = float(self.pid_params_boxes[1].text())
+        kd = float(self.pid_params_boxes[2].text())
+
+        Gs = ct.TransferFunction([c, k], [m, c, k])
+
+        omega = np.logspace(-1, 5, 600)
+
+        mag, phase, _ = ct.frequency_response(Gs, omega=omega)
+
+        realpart = mag * np.cos(phase)
+        imagpart = mag * np.sin(phase)
+
+        self.nyquist_window = NyquistWindow()
+
+        self.nyquist_window.plot_curve_11.setData([-1], [0])
+
+        xdata = np.concatenate([+realpart[::-1], realpart])
+        ydata = np.concatenate([-imagpart[::-1], imagpart])
+        self.nyquist_window.plot_curve_12.setData(xdata, ydata)
+
+        self.control_type = self.sim_comboboxes[1].currentIndex()
+        if self.control_type == 0:
+            Gk = ct.TransferFunction([c, k, 0], [m, c + kd, k + kp, ki])
+        elif self.control_type == 1:
+            Gk = ct.TransferFunction([c, k], [m + kd, c + kp, k + ki])
+        elif self.control_type == 2:
+            Gk = ct.TransferFunction([c, k], [kd, m + kp, c + ki, k])
+        else:
+            Gk = ct.TransferFunction([c, k], [m, c, k])
+
+        mag, phase, _ = ct.frequency_response(Gk, omega=omega)
+
+        realpart = mag * np.cos(phase)
+        imagpart = mag * np.sin(phase)
+
+        xdata = np.concatenate([+realpart[::-1], realpart])
+        ydata = np.concatenate([-imagpart[::-1], imagpart])
+        self.nyquist_window.plot_curve_13.setData(xdata, ydata)
 
     def _apply_styles(self):
         palette = self.palette()

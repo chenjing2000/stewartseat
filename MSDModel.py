@@ -20,7 +20,7 @@ class MSDPlant:
         self.v = 0.0  # velocity
         self.a = 0.0  # acceleration
 
-    def update(self, excitation: np.ndarray, control_force: float):
+    def update_euler(self, excitation: np.ndarray, control_force: float):
 
         xa, xe = excitation
         ve = (xe - xa) / self.dt
@@ -45,7 +45,7 @@ class MSDPlant:
         a = force / self.m
         return v, a
 
-    def updaterk4(self, excitation: np.ndarray, control_force: float):
+    def update(self, excitation: np.ndarray, control_force: float):
 
         xa, xe = excitation
         ve = (xe - xa) / self.dt
@@ -80,7 +80,7 @@ class PIDController:
     def calculate_force(self, error: float):
         # 抗积分饱和：限制积分项
         self.integral += error * self.dt
-        self.integral = max(min(self.integral, 1e4), -1e4)
+        # self.integral = max(min(self.integral, 1e4), -1e4)
         derivative = (error - self.error_prev) / self.dt
         self.error_prev = error
         output = self.kp * error + self.ki * self.integral + self.kd * derivative
