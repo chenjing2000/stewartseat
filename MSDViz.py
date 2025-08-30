@@ -57,7 +57,7 @@ class MainWindow(QMainWindow):
 
         self.tabpages = QTabWidget()
         self.tabpage1 = QWidget()
-        self.tabpage2 = TabPage2()
+        self.tabpage2 = TabPage2(self)
 
         self.tabpages.addTab(self.tabpage1, "基础控制")
         self.tabpages.addTab(self.tabpage2, "传递函数")
@@ -150,11 +150,17 @@ class MainWindow(QMainWindow):
 
         self.target_value = float(value_box.text())
 
+        ctrl_validator = QDoubleValidator(-1e6, 1e6, 2)
+        ctrl_validator.setNotation(QDoubleValidator.StandardNotation)
+
+        for box in self.ctrl_boxes:
+            box.setValidator(ctrl_validator)
+
         btn_bodeplot = QPushButton("bode")
         btn_bodeplot.clicked.connect(self.btn_bodeplot_clicked)
         target_layout.addWidget(btn_bodeplot, 1)
 
-        btn_nyquistplot = QPushButton("nyquist")
+        btn_nyquistplot = QPushButton("频谱分析")
         btn_nyquistplot.clicked.connect(self.btn_nyquistplot_clicked)
         target_layout.addWidget(btn_nyquistplot, 1)
 
@@ -217,6 +223,11 @@ class MainWindow(QMainWindow):
         simulation_layout_2.addWidget(value_box)
 
         self.sim_boxes.append(value_box)
+
+        sim_validator = QDoubleValidator(0.0, 100.0, 2)
+        sim_validator.setNotation(QDoubleValidator.StandardNotation)
+        for box in self.sim_boxes:
+            box.setValidator(sim_validator)
 
         self.time_stop = float(value_box.text())
 
@@ -433,7 +444,7 @@ class MainWindow(QMainWindow):
         if self.time_window is not None:
             self.time_window.close()
 
-        self.time_window = TimeWindow()
+        self.time_window = TransientWindow()
         self.time_window.plot_curve_11.setData([], [])
         self.time_window.plot_curve_12.setData([], [])
         self.time_window.plot_curve_2.setData([], [])
@@ -557,10 +568,6 @@ class MainWindow(QMainWindow):
         c = float(self.msd_params_boxes[1].text())
         k = float(self.msd_params_boxes[2].text())
 
-        kp = float(self.ctrl_boxes[0].text())
-        ki = float(self.ctrl_boxes[1].text())
-        kd = float(self.ctrl_boxes[2].text())
-
         Gs = ct.TransferFunction([c, k], [m, c, k])
 
         mag, phase, omega = ct.frequency_response(Gs)
@@ -578,32 +585,18 @@ class MainWindow(QMainWindow):
         self.bode_window.plot_curve_22.setData(omega, phase + np.pi/2)
         self.bode_window.plot_curve_23.setData(omega, phase + np.pi)
 
-        self.control_type = self.ctrl_comboboxes[0].currentIndex()
-        if self.control_type == 0:
-            Gk = ct.TransferFunction([c, k, 0], [m, c + kd, k + kp, ki])
-        elif self.control_type == 1:
-            Gk = ct.TransferFunction([c, k], [m + kd, c + kp, k + ki])
-        elif self.control_type == 2:
-            Gk = ct.TransferFunction([c, k], [kd, m + kp, c + ki, k])
-        else:
-            Gk = ct.TransferFunction([c, k], [m, c, k])
-
-        magk, phasek, omegak = ct.frequency_response(Gk)
-
-        self.bode_window.plot_curve_31.setData(omega, 20*np.log10(mag))
-        self.bode_window.plot_curve_32.setData(omegak, 20*np.log10(magk))
-
     def closeEvent(self, event):
         # 主窗口关闭前，先关闭子窗口
 
-        if self.time_window is not None:
-            self.time_window.close()
+        windows = [self.time_window,
+                   self.bode_window,
+                   self.frequency_window,
+                   self.tabpage2.transient_window,
+                   self.tabpage2.frequency_window]
 
-        if self.bode_window is not None:
-            self.bode_window.close()
-
-        if self.nyquist_window is not None:
-            self.nyquist_window.close()
+        for window in windows:
+            if window is not None:
+                window.close()
 
         super().closeEvent(event)
 
@@ -619,20 +612,25 @@ class MainWindow(QMainWindow):
 
         Gs = ct.TransferFunction([c, k], [m, c, k])
 
-        omega = np.logspace(-1, 5, 600)
+        # 绘图
+        self.frequency_window = FrequencyWindow()
 
-        mag, phase, _ = ct.frequency_response(Gs, omega=omega)
+        plot_widget_i = self.frequency_window.plot_widget_1
+        plot_widget_j = self.frequency_window.plot_widget_2
+
+        mag, phase, omega = ct.frequency_response(Gs)
+
+        plot_widget_i.plot(omega, 20*np.log10(mag), pen=pg.mkPen(
+            color='r', width=2), name='uncontrol')
 
         realpart = mag * np.cos(phase)
         imagpart = mag * np.sin(phase)
 
-        self.nyquist_window = NyquistWindow()
-
-        self.nyquist_window.plot_curve_11.setData([-1], [0])
-
         xdata = np.concatenate([+realpart[::-1], realpart])
         ydata = np.concatenate([-imagpart[::-1], imagpart])
-        self.nyquist_window.plot_curve_12.setData(xdata, ydata)
+
+        plot_widget_j.plot(xdata, ydata, pen=pg.mkPen(
+            color='r', width=2), name='uncontrol')
 
         self.control_type = self.ctrl_comboboxes[0].currentIndex()
         if self.control_type == 0:
@@ -644,20 +642,25 @@ class MainWindow(QMainWindow):
         else:
             Gk = ct.TransferFunction([c, k], [m, c, k])
 
-        mag, phase, _ = ct.frequency_response(Gk, omega=omega)
+        mag, phase, omega = ct.frequency_response(Gk)
+
+        plot_widget_i.plot(omega, 20*np.log10(mag), pen=pg.mkPen(
+            color='g', width=2), name='control')
 
         realpart = mag * np.cos(phase)
         imagpart = mag * np.sin(phase)
 
         xdata = np.concatenate([+realpart[::-1], realpart])
         ydata = np.concatenate([-imagpart[::-1], imagpart])
-        self.nyquist_window.plot_curve_13.setData(xdata, ydata)
+
+        plot_widget_j.plot(xdata, ydata, pen=pg.mkPen(
+            color='g', width=2), name="control")
 
     def _apply_styles(self):
         palette = self.palette()
         palette.setColor(QPalette.ColorRole.Window, QColor(240, 240, 240))
         self.setPalette(palette)
-        self.setStyleSheet("""
+        self.styleSheet = """
             QGroupBox {
                 font-weight: bold;
                 border: 1px solid gray;
@@ -678,6 +681,11 @@ class MainWindow(QMainWindow):
             }
             QPushButton:hover {
                 background-color: #0056b3;
+            }
+            QPushButton:disabled {
+                background-color: #E3E3E3;  /* 灰色背景 */
+                color: #A6A6A6;             /* 浅灰文本 */
+                border: 1px solid #D0D0D0;  /* 灰色边框 */
             }
             QLineEdit, QDoubleSpinBox, QComboBox {
                 padding: 5px;
@@ -713,7 +721,8 @@ class MainWindow(QMainWindow):
                 background: transparent;
                 color: #444;
             }
-        """)
+        """
+        self.setStyleSheet(self.styleSheet)
 
 
 if __name__ == "__main__":
