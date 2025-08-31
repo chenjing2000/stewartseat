@@ -89,7 +89,7 @@ class TabPage2(QWidget):
         self.transient_window = None
         self.frequency_window = None
 
-        self.btn_frequency_responses = QPushButton("频域响应")
+        self.btn_frequency_responses = QPushButton("频谱分析")
         self.btn_frequency_responses.clicked.connect(
             self.btn_frequency_responses_clicked)
         tf_layout_4.addWidget(self.btn_frequency_responses)

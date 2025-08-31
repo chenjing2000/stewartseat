@@ -1,12 +1,13 @@
 
+
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget,
                                QVBoxLayout, QHBoxLayout, QLabel,
                                QGroupBox, QLineEdit, QLabel,
                                QComboBox, QPushButton, QDialog)
 import pyqtgraph as pg
-from OpenGL.GL import *
-from OpenGL.GL.shaders import *
+# from OpenGL.GL import *
+# from OpenGL.GL.shaders import *
 
 import numpy as np
 
@@ -34,7 +35,11 @@ class TransientWindow(QWidget):
             [], [], pen=pg.mkPen(color='b', width=2), name='displacement')
         self.plot_curve_12 = self.plot_widget_1.plot(
             [], [], pen=pg.mkPen(color='r', width=2), name='excitation')
+
+        self.coord_label_1 = QLabel("X: , Y: ")
+
         layout.addWidget(self.plot_widget_1, 1)
+        layout.addWidget(self.coord_label_1)
 
         self.plot_widget_2 = pg.PlotWidget()
         self.plot_widget_2.setTitle(
@@ -48,7 +53,11 @@ class TransientWindow(QWidget):
         self.plot_widget_2.addLegend(labelTextColor='blue')
         self.plot_curve_2 = self.plot_widget_2.plot(
             [], [], pen=pg.mkPen(color='b', width=2), name="acceleration")
+
+        self.coord_label_2 = QLabel("X: , Y: ")
+
         layout.addWidget(self.plot_widget_2, 1)
+        layout.addWidget(self.coord_label_2)
 
         self.plot_widget_3 = pg.PlotWidget()
         self.plot_widget_3.setTitle(
@@ -62,7 +71,21 @@ class TransientWindow(QWidget):
         self.plot_widget_3.addLegend(labelTextColor='blue')
         self.plot_curve_3 = self.plot_widget_3.plot(
             [], [], pen=pg.mkPen(color='b', width=2), name="actuator force")
+
+        self.coord_label_3 = QLabel("X: , Y: ")
+
         layout.addWidget(self.plot_widget_3, 1)
+        layout.addWidget(self.coord_label_3)
+
+        # 连接鼠标移动事件到自定义槽函数
+        self.plot_widget_1.scene().sigMouseMoved.connect(
+            lambda pos: FrequencyWindow.update_coords(pos, self.plot_widget_1, self.coord_label_1))
+        self.plot_widget_2.scene().sigMouseMoved.connect(
+            lambda pos: FrequencyWindow.update_coords(pos, self.plot_widget_2, self.coord_label_2))
+        self.plot_widget_3.scene().sigMouseMoved.connect(
+            lambda pos: FrequencyWindow.update_coords(pos, self.plot_widget_3, self.coord_label_3))
+
+        self.show()
 
 
 class BodeWindow(QWidget):
@@ -91,7 +114,11 @@ class BodeWindow(QWidget):
             [], [], pen=pg.mkPen(color='g', width=2), name='velocity')
         self.plot_curve_13 = self.plot_widget_1.plot(
             [], [], pen=pg.mkPen(color='b', width=2), name='acceleration')
+
+        self.coord_label_1 = QLabel("X: , Y: ")
+
         layout.addWidget(self.plot_widget_1, 1)
+        layout.addWidget(self.coord_label_1)
 
         self.plot_widget_2 = pg.PlotWidget()
         self.plot_widget_2.setLogMode(x=True, y=False)
@@ -109,7 +136,19 @@ class BodeWindow(QWidget):
             [], [], pen=pg.mkPen(color='g', width=2), name='velocity')
         self.plot_curve_23 = self.plot_widget_2.plot(
             [], [], pen=pg.mkPen(color='b', width=2), name='acceleration')
+
+        self.coord_label_2 = QLabel("X: , Y: ")
+
         layout.addWidget(self.plot_widget_2, 1)
+        layout.addWidget(self.coord_label_2)
+
+        # 连接鼠标移动事件到自定义槽函数
+        self.plot_widget_1.scene().sigMouseMoved.connect(
+            lambda pos: FrequencyWindow.update_coords(pos, self.plot_widget_1, self.coord_label_1))
+        self.plot_widget_2.scene().sigMouseMoved.connect(
+            lambda pos: FrequencyWindow.update_coords(pos, self.plot_widget_2, self.coord_label_2))
+
+        self.show()
 
 
 class FrequencyWindow(QWidget):
@@ -136,12 +175,15 @@ class FrequencyWindow(QWidget):
         # 添加横轴
         self.plot_widget_1.addLine(y=0, pen=pg.mkPen(color='k', width=1))
 
+        self.coord_label_1 = QLabel("X: , Y: ")
+
         layout.addWidget(self.plot_widget_1, 1)
+        layout.addWidget(self.coord_label_1)
 
         self.plot_widget_2 = pg.PlotWidget()
         self.plot_widget_2.setLogMode(x=False, y=False)
         self.plot_widget_2.setTitle(
-            "Nyquist Chart", color='black', size="10pt")
+            "Frequency Chart", color='black', size="10pt")
         self.plot_widget_2.setLabel('left', 'Amplitude (rad)', color='black')
         self.plot_widget_2.setLabel('bottom', 'Frequency (Hz)', color='black')
         self.plot_widget_2.setBackground('white')
@@ -155,7 +197,35 @@ class FrequencyWindow(QWidget):
         self.plot_widget_2.addLine(x=0, pen=pg.mkPen(color='k', width=1))
         self.plot_widget_2.addLine(y=0, pen=pg.mkPen(color='k', width=1))
 
+        self.coord_label_2 = QLabel("X: , Y: ")
+
         layout.addWidget(self.plot_widget_2, 2)
+        layout.addWidget(self.coord_label_2)
+
+        # 连接鼠标移动事件到自定义槽函数
+        self.plot_widget_1.scene().sigMouseMoved.connect(
+            lambda pos: self.update_coords(pos, self.plot_widget_1, self.coord_label_1))
+        self.plot_widget_2.scene().sigMouseMoved.connect(
+            lambda pos: self.update_coords(pos, self.plot_widget_2, self.coord_label_2))
+
+        self.show()
+
+    @staticmethod
+    def update_coords(pos, plot_widget: pg.PlotWidget, label: pg.TextItem):
+
+        if plot_widget.sceneBoundingRect().contains(pos):
+            mousePoint = plot_widget.plotItem.vb.mapSceneToView(pos)
+            xp, yp = mousePoint.x(), mousePoint.y()
+
+            is_logx = plot_widget.plotItem.ctrl.logXCheck.isChecked()
+            if is_logx:
+                xp = 10 ** xp
+
+            is_logy = plot_widget.plotItem.ctrl.logYCheck.isChecked()
+            if is_logy:
+                yp = 10 ** yp
+
+            label.setText(f"X: {xp:.2f}, Y:{yp:.2f}")
 
 
 class ZPKDialog(QDialog):

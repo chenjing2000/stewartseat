@@ -279,9 +279,9 @@ class MainWindow(QMainWindow):
         self.timer.setInterval(5)  # 每 5 毫秒触发一次
         self.timer.timeout.connect(self.update_simulation)
 
-        self.time_window = None
+        self.transient_window = None
         self.bode_window = None
-        self.nyquist_window = None
+        self.frequency_window = None
 
     def btn_show_info_clicked(self):
         dialog = QDialog(self)
@@ -441,18 +441,21 @@ class MainWindow(QMainWindow):
         self.a_series = np.zeros(nt, dtype=float)
         self.f_series = np.zeros(nt, dtype=float)
 
-        if self.time_window is not None:
-            self.time_window.close()
+        if self.transient_window is None or not self.transient_window.isVisible():
+            self.transient_window = TransientWindow()   # 新建
 
-        self.time_window = TransientWindow()
-        self.time_window.plot_curve_11.setData([], [])
-        self.time_window.plot_curve_12.setData([], [])
-        self.time_window.plot_curve_2.setData([], [])
-        self.time_window.plot_curve_3.setData([], [])
+        self.transient_window.show()
+        self.transient_window.raise_()
+        self.transient_window.activateWindow()
 
-        self.time_window.plot_widget_1.setXRange(0, self.time_stop)
-        self.time_window.plot_widget_2.setXRange(0, self.time_stop)
-        self.time_window.plot_widget_3.setXRange(0, self.time_stop)
+        self.transient_window.plot_curve_11.setData([], [])
+        self.transient_window.plot_curve_12.setData([], [])
+        self.transient_window.plot_curve_2.setData([], [])
+        self.transient_window.plot_curve_3.setData([], [])
+
+        self.transient_window.plot_widget_1.setXRange(0, self.time_stop)
+        self.transient_window.plot_widget_2.setXRange(0, self.time_stop)
+        self.transient_window.plot_widget_3.setXRange(0, self.time_stop)
 
     def btn_simulate_clicked(self):
 
@@ -484,13 +487,13 @@ class MainWindow(QMainWindow):
             self.f_series[id] = force
 
         if len(self.x_series) > 0:
-            self.time_window.plot_curve_11.setData(
+            self.transient_window.plot_curve_11.setData(
                 self.time[:-1], self.x_series[:-1])
-            self.time_window.plot_curve_12.setData(
+            self.transient_window.plot_curve_12.setData(
                 self.time[:-1], self.excitation[:-1])
-            self.time_window.plot_curve_2.setData(
+            self.transient_window.plot_curve_2.setData(
                 self.time[:-1], self.a_series[:-1])
-            self.time_window.plot_curve_3.setData(
+            self.transient_window.plot_curve_3.setData(
                 self.time[:-1], self.f_series[:-1])
 
         self.status_label.setText("Simulation stops.")
@@ -543,13 +546,13 @@ class MainWindow(QMainWindow):
 
         if id % 20 == 0:
             # 更新Pyqtgraph曲线（使用整个数据历史）
-            self.time_window.plot_curve_11.setData(
+            self.transient_window.plot_curve_11.setData(
                 self.time[:id+1], self.x_series[:id+1])
-            self.time_window.plot_curve_12.setData(
+            self.transient_window.plot_curve_12.setData(
                 self.time[:id+1], self.excitation[:id+1])
-            self.time_window.plot_curve_2.setData(
+            self.transient_window.plot_curve_2.setData(
                 self.time[:id+1], self.a_series[:id+1])
-            self.time_window.plot_curve_3.setData(
+            self.transient_window.plot_curve_3.setData(
                 self.time[:id+1], self.f_series[:id+1])
 
         # 更新OpenGL绘图
@@ -572,10 +575,13 @@ class MainWindow(QMainWindow):
 
         mag, phase, omega = ct.frequency_response(Gs)
 
-        if self.bode_window is not None:
-            self.bode_window.close()
+        if self.bode_window is None or not self.bode_window.isVisible():
+            self.bode_window = BodeWindow()   # 新建
 
-        self.bode_window = BodeWindow()
+        self.bode_window.show()
+        self.bode_window.raise_()
+        self.bode_window.activateWindow()
+
         self.bode_window.plot_curve_11.setData(omega, 20*np.log10(mag))
         self.bode_window.plot_curve_12.setData(omega, 20*np.log10(mag * omega))
         self.bode_window.plot_curve_13.setData(
@@ -588,7 +594,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         # 主窗口关闭前，先关闭子窗口
 
-        windows = [self.time_window,
+        windows = [self.transient_window,
                    self.bode_window,
                    self.frequency_window,
                    self.tabpage2.transient_window,
@@ -613,16 +619,26 @@ class MainWindow(QMainWindow):
         Gs = ct.TransferFunction([c, k], [m, c, k])
 
         # 绘图
-        self.frequency_window = FrequencyWindow()
+        if self.frequency_window is None or not self.frequency_window.isVisible():
+            self.frequency_window = FrequencyWindow()   # 新建
+
+        self.frequency_window.show()
+        self.frequency_window.raise_()
+        self.frequency_window.activateWindow()
 
         plot_widget_i = self.frequency_window.plot_widget_1
         plot_widget_j = self.frequency_window.plot_widget_2
 
+        for widget in [plot_widget_i, plot_widget_j]:
+            self.tabpage2.clear_plot_widget(widget)
+
+        # Bode 图
         mag, phase, omega = ct.frequency_response(Gs)
 
         plot_widget_i.plot(omega, 20*np.log10(mag), pen=pg.mkPen(
             color='r', width=2), name='uncontrol')
 
+        # Nyquist 图
         realpart = mag * np.cos(phase)
         imagpart = mag * np.sin(phase)
 
@@ -655,6 +671,12 @@ class MainWindow(QMainWindow):
 
         plot_widget_j.plot(xdata, ydata, pen=pg.mkPen(
             color='g', width=2), name="control")
+
+        # 添加横轴
+        plot_widget_i.addLine(y=0, pen=pg.mkPen(color='k', width=1))
+        # 添加横轴与纵轴
+        plot_widget_j.addLine(x=0, pen=pg.mkPen(color='k', width=1))
+        plot_widget_j.addLine(y=0, pen=pg.mkPen(color='k', width=1))
 
     def _apply_styles(self):
         palette = self.palette()
