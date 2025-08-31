@@ -77,10 +77,10 @@ class MainWindow(QMainWindow):
                 key_label.setFixedWidth(50)
                 self.params_layout.addWidget(key_label)
             else:
-                btn_show_info = QPushButton(key)
-                btn_show_info.setFixedWidth(50)
-                self.params_layout.addWidget(btn_show_info)
-                btn_show_info.clicked.connect(self.btn_show_info_clicked)
+                btn_show_infos = QPushButton(key)
+                btn_show_infos.setFixedWidth(50)
+                self.params_layout.addWidget(btn_show_infos)
+                btn_show_infos.clicked.connect(self.btn_show_infos_clicked)
 
             value_box = QLineEdit(str(value))
             value_box.setMaximumWidth(100)
@@ -160,9 +160,10 @@ class MainWindow(QMainWindow):
         btn_bodeplot.clicked.connect(self.btn_bodeplot_clicked)
         target_layout.addWidget(btn_bodeplot, 1)
 
-        btn_nyquistplot = QPushButton("频谱分析")
-        btn_nyquistplot.clicked.connect(self.btn_nyquistplot_clicked)
-        target_layout.addWidget(btn_nyquistplot, 1)
+        btn_frequency_analyses = QPushButton("频谱分析")
+        btn_frequency_analyses.clicked.connect(
+            self.btn_frequency_analyses_clicked)
+        target_layout.addWidget(btn_frequency_analyses, 1)
 
         control_layout.addLayout(target_layout)
 
@@ -283,10 +284,18 @@ class MainWindow(QMainWindow):
         self.bode_window = None
         self.frequency_window = None
 
-    def btn_show_info_clicked(self):
+    def get_windows(self):
+
+        windows_list = [self.transient_window,
+                        self.bode_window,
+                        self.frequency_window]
+        return windows_list
+
+    def btn_show_infos_clicked(self):
         dialog = QDialog(self)
         dialog.setWindowTitle("基本信息")
-        dialog.setFixedSize(300, 200)
+        dialog.setFixedWidth(300)
+        dialog.setMaximumHeight(300)
 
         layout = QVBoxLayout()
 
@@ -332,36 +341,25 @@ class MainWindow(QMainWindow):
         layout.addWidget(label2)
         layout.addWidget(label3)
 
-        Gs = ct.TransferFunction([c, k], [m, c, k])
-
-        kp = float(self.ctrl_boxes[0].text())
-        ki = float(self.ctrl_boxes[1].text())
-        kd = float(self.ctrl_boxes[2].text())
-
-        self.control_type = self.ctrl_comboboxes[0].currentIndex()
-        if self.control_type == 0:
-            Gk = ct.TransferFunction([c, k, 0], [m, c + kd, k + kp, ki])
-        elif self.control_type == 1:
-            Gk = ct.TransferFunction([c, k], [m + kd, c + kp, k + ki])
-        elif self.control_type == 2:
-            Gk = ct.TransferFunction([c, k], [kd, m + kp, c + ki, k])
-        else:
-            Gk = ct.TransferFunction([c, k], [m, c, k])
+        Gs, Gb = self.get_system_transfer_functions()
 
         # 传递函数极点
         poles = ct.poles(Gs)
 
         poles_str = ", ".join(
             [f"{p.real:.2f}{'+' if p.imag>=0 else ''}{p.imag:.2f}j" for p in poles])
-        label4 = QLabel(f"poles = [{poles_str}].")
+        label4 = QLabel(f"open loop poles : [{poles_str}].")
+        label4.setWordWrap(True)
 
-        poles = ct.poles(Gk)
+        layout.addWidget(label4)
+
+        poles = ct.poles(Gb)
 
         poles_str = ", ".join(
             [f"{p.real:.2f}{'+' if p.imag>=0 else ''}{p.imag:.2f}j" for p in poles])
-        label5 = QLabel(f"poles = [{poles_str}] for controlled.")
+        label5 = QLabel(f"closed loop poles : [{poles_str}]")
+        label5.setWordWrap(True)
 
-        layout.addWidget(label4)
         layout.addWidget(label5)
 
         dialog.setLayout(layout)
@@ -383,7 +381,7 @@ class MainWindow(QMainWindow):
                 file_name, Qt.ElideMiddle, self.status_label.width())
             self.status_label.setText(file_name_short)
 
-    def system_params_initilization(self):
+    def system_params_initialization(self):
 
         self.msd.m = float(self.msd_params_boxes[0].text())
         self.msd.c = float(self.msd_params_boxes[1].text())
@@ -461,21 +459,15 @@ class MainWindow(QMainWindow):
 
         self.status_label.setText("Simulation starts.")
 
-        # 停止并重新启动定时器，开始动画
+        # 停止定时器
         if self.timer.isActive():
             self.timer.stop()
 
-        self.system_params_initilization()
+        self.system_params_initialization()
 
         for id in range(len(self.time)-1):
-            if self.control_type == 0:
-                error = self.target_value - self.msd.x
-            elif self.control_type == 1:
-                error = self.target_value - self.msd.v
-            elif self.control_type == 2:
-                error = self.target_value - self.msd.a
-            else:
-                error = 0.0
+            target_list = [self.msd.x, self.msd.v, self.msd.a, 0.0]
+            error = self.target_value - target_list[self.control_type]
 
             force = self.pid.calculate_force(error)
 
@@ -504,7 +496,7 @@ class MainWindow(QMainWindow):
         """
         self.status_label.setText("Animation starts.")
 
-        self.system_params_initilization()
+        self.system_params_initialization()
 
         # 停止并重新启动定时器，开始动画
         if self.timer.isActive():
@@ -522,15 +514,8 @@ class MainWindow(QMainWindow):
             return
 
         # 计算PID控制力
-
-        if self.control_type == 0:
-            error = self.target_value - self.msd.x
-        elif self.control_type == 1:
-            error = self.target_value - self.msd.v
-        elif self.control_type == 2:
-            error = self.target_value - self.msd.a
-        else:
-            error = 0.0
+        target_list = [self.msd.x, self.msd.v, self.msd.a, 0.0]
+        error = self.target_value - target_list[self.control_type]
 
         control_force = self.pid.calculate_force(error)
 
@@ -571,7 +556,7 @@ class MainWindow(QMainWindow):
         c = float(self.msd_params_boxes[1].text())
         k = float(self.msd_params_boxes[2].text())
 
-        Gs = ct.TransferFunction([c, k], [m, c, k])
+        Gs = ct.tf([c, k], [m, c, k])
 
         mag, phase, omega = ct.frequency_response(Gs)
 
@@ -594,29 +579,56 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         # 主窗口关闭前，先关闭子窗口
 
-        windows = [self.transient_window,
-                   self.bode_window,
-                   self.frequency_window,
-                   self.tabpage2.transient_window,
-                   self.tabpage2.frequency_window]
+        for window in self.tabpage2.get_windows():
+            if window is not None:
+                window.close()
 
-        for window in windows:
+        for window in self.get_windows():
             if window is not None:
                 window.close()
 
         super().closeEvent(event)
 
-    def btn_nyquistplot_clicked(self):
+    def get_system_transfer_functions(self):
 
         m = float(self.msd_params_boxes[0].text())
         c = float(self.msd_params_boxes[1].text())
         k = float(self.msd_params_boxes[2].text())
 
-        kp = float(self.ctrl_boxes[0].text())
-        ki = float(self.ctrl_boxes[1].text())
-        kd = float(self.ctrl_boxes[2].text())
+        Gs = ct.tf([c, k], [m, c, k])
 
-        Gs = ct.TransferFunction([c, k], [m, c, k])
+        control_type = self.ctrl_comboboxes[0].currentIndex()
+
+        if control_type < 3:
+            kp = float(self.ctrl_boxes[0].text())
+            ki = float(self.ctrl_boxes[1].text())
+            kd = float(self.ctrl_boxes[2].text())
+
+            numx = [1, 0]
+            denx = [kd, kp, ki]
+
+            if control_type == 1:
+                denx.extend([0])
+
+            if control_type == 2:
+                denx.extend([0, 0])
+
+            Hx = ct.tf(numx, denx)  # PID 控制器传递函数
+
+            Gf = ct.tf(1, [c, k])  # 力传递函数
+
+            Gb = Hx * Gs / (Hx + Gs * Gf)  # 闭环系统传递函数
+
+            Gb = ct.minreal(Gb, verbose=False)
+
+        else:
+            Gb = Gs
+
+        return Gs, Gb
+
+    def btn_frequency_analyses_clicked(self):
+
+        Gs, Gb = self.get_system_transfer_functions()
 
         # 绘图
         if self.frequency_window is None or not self.frequency_window.isVisible():
@@ -632,6 +644,7 @@ class MainWindow(QMainWindow):
         for widget in [plot_widget_i, plot_widget_j]:
             self.tabpage2.clear_plot_widget(widget)
 
+        # 开环频率特性分析
         # Bode 图
         mag, phase, omega = ct.frequency_response(Gs)
 
@@ -648,17 +661,8 @@ class MainWindow(QMainWindow):
         plot_widget_j.plot(xdata, ydata, pen=pg.mkPen(
             color='r', width=2), name='uncontrol')
 
-        self.control_type = self.ctrl_comboboxes[0].currentIndex()
-        if self.control_type == 0:
-            Gk = ct.TransferFunction([c, k, 0], [m, c + kd, k + kp, ki])
-        elif self.control_type == 1:
-            Gk = ct.TransferFunction([c, k], [m + kd, c + kp, k + ki])
-        elif self.control_type == 2:
-            Gk = ct.TransferFunction([c, k], [kd, m + kp, c + ki, k])
-        else:
-            Gk = ct.TransferFunction([c, k], [m, c, k])
-
-        mag, phase, omega = ct.frequency_response(Gk)
+        # 闭环频率特性分析
+        mag, phase, omega = ct.frequency_response(Gb)
 
         plot_widget_i.plot(omega, 20*np.log10(mag), pen=pg.mkPen(
             color='g', width=2), name='control')

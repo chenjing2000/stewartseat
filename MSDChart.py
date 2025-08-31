@@ -154,7 +154,7 @@ class BodeWindow(QWidget):
 class FrequencyWindow(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent=parent)
-        self.setWindowTitle("Nyquist Chart")
+        self.setWindowTitle("Frequency Chart")
         self.setFixedSize(400, 600)
         self.move(630, 100)
         self.show()
