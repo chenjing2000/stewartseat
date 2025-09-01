@@ -268,7 +268,11 @@ class TabPage2(QWidget):
             self.status_changed.emit("Numerator or denominator is Null.")
             return False
 
-        self.Hs = ct.minreal(ct.tf(num, den))
+        self.Hs = ct.minreal(ct.tf(num, den), verbose=False)
+
+        if len(self.Hs.num[0][0]) >= len(self.Hs.den[0][0]):
+            self.status_changed.emit("Controller is not strictly proper.")
+            return False
 
         return True
 
@@ -328,8 +332,6 @@ class TabPage2(QWidget):
         if not self.get_transfer_function_from_boxes():
             return
 
-        mag, phase, omega = ct.frequency_response(self.Hs)
-
         if self.frequency_window is None:
             self.frequency_window = FrequencyWindow()   # 新建
 
@@ -339,28 +341,10 @@ class TabPage2(QWidget):
 
         self.frequency_window.clear_plots()
 
-        plot_widget_i = self.frequency_window.plot_widget_1
-        plot_widget_j = self.frequency_window.plot_widget_2
+        self.frequency_window.plot_frequency_figures(
+            self.Hs, 'b', "transfer function")
 
-        plot_widget_i.plot(omega, 20*np.log10(mag), pen=pg.mkPen(
-            color='b', width=2), name='uncontrol')
-
-        # 添加横轴
-        plot_widget_i.addLine(y=0, pen=pg.mkPen(color='k', width=1))
-
-        # Nyquist plot
-        realpart = mag * np.cos(phase)
-        imagpart = mag * np.sin(phase)
-
-        xdata = np.concatenate([+realpart[::-1], realpart])
-        ydata = np.concatenate([-imagpart[::-1], imagpart])
-
-        plot_widget_j.plot(xdata, ydata, pen=pg.mkPen(
-            color='b', width=2), name='uncontrol')
-
-        # 添加横轴与纵轴
-        plot_widget_j.addLine(x=0, pen=pg.mkPen(color='k', width=1))
-        plot_widget_j.addLine(y=0, pen=pg.mkPen(color='k', width=1))
+        self.frequency_window.add_auxiliary_parts()
 
     def btn_discrete_control_clicked(self):
 
@@ -395,8 +379,7 @@ class TabPage2(QWidget):
         nb = len(den)
 
         if len(num) > len(den):
-            self.status_changed.emit(
-                "Order of num must be less than that of den in G(s).")
+            self.status_changed.emit("G(z) is not strictly proper.")
             return
 
         self.system_params_initialization()
@@ -558,52 +541,13 @@ class TabPage2(QWidget):
 
         self.frequency_window_2.clear_plots()
 
-        plot_widget_i = self.frequency_window_2.plot_widget_1
-        plot_widget_j = self.frequency_window_2.plot_widget_2
-
         Gs, Gb = self.get_system_transfer_functions()
 
-        # 1. 开环系统频率特性
-        mag, phase, omega = ct.frequency_response(Gs)
+        # 开环\闭环系统频率特性
+        self.frequency_window_2.plot_frequency_figures(Gs, 'b', '开环系统频率特性')
+        self.frequency_window_2.plot_frequency_figures(Gb, 'r', '闭环系统频率特性')
 
-        plot_widget_i.plot(omega, 20*np.log10(mag), pen=pg.mkPen(
-            color='b', width=2), name='开环系统频率特性')
-
-        # 添加横轴
-        plot_widget_i.addLine(y=0, pen=pg.mkPen(color='k', width=1))
-
-        # Nyquist plot
-        realpart = mag * np.cos(phase)
-        imagpart = mag * np.sin(phase)
-
-        xdata = np.concatenate([+realpart[::-1], realpart])
-        ydata = np.concatenate([-imagpart[::-1], imagpart])
-
-        plot_widget_j.plot(xdata, ydata, pen=pg.mkPen(
-            color='b', width=2), name='开环系统频率特性')
-
-        # 2. 闭环系统频率特性
-        mag, phase, omega = ct.frequency_response(Gb)
-
-        plot_widget_i.plot(omega, 20*np.log10(mag), pen=pg.mkPen(
-            color='r', width=2), name='闭环系统频率特性')
-
-        # 添加横轴
-        plot_widget_i.addLine(y=0, pen=pg.mkPen(color='k', width=1))
-
-        # Nyquist plot
-        realpart = mag * np.cos(phase)
-        imagpart = mag * np.sin(phase)
-
-        xdata = np.concatenate([+realpart[::-1], realpart])
-        ydata = np.concatenate([-imagpart[::-1], imagpart])
-
-        plot_widget_j.plot(xdata, ydata, pen=pg.mkPen(
-            color='r', width=2), name='闭环系统频率特性')
-
-        # 添加横轴与纵轴
-        plot_widget_j.addLine(x=0, pen=pg.mkPen(color='k', width=1))
-        plot_widget_j.addLine(y=0, pen=pg.mkPen(color='k', width=1))
+        self.frequency_window_2.add_auxiliary_parts()
 
     def system_params_initialization(self):
 
@@ -653,3 +597,5 @@ class TabPage2(QWidget):
         self.v_series = np.zeros(nt, dtype=float)
         self.a_series = np.zeros(nt, dtype=float)
         self.f_series = np.zeros(nt, dtype=float)
+
+        self.status_changed.emit("System initialization completes.")

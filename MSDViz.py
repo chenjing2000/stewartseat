@@ -1,16 +1,14 @@
 # opengl_widget.py
 
-from OpenGL.GL.shaders import *
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget,
                                QVBoxLayout, QHBoxLayout, QLabel,
                                QGroupBox, QLineEdit, QLabel,
                                QComboBox, QPushButton, QDialog,
                                QCheckBox, QFileDialog, QTabWidget)
-import pyqtgraph as pg
 from PySide6.QtGui import (QPalette, QColor, QDoubleValidator,
-                           QIntValidator, QFontMetrics)
-from PySide6.QtCore import QTimer, Signal
+                           QIntValidator, QFontMetrics, QIcon)
+import pyqtgraph as pg
 from OpenGL.GL import *
 
 import numpy as np
@@ -25,6 +23,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("质量-阻尼-弹簧控制系统")
+        self.setWindowIcon(QIcon("icon/rocket-launch.png"))
         self.setFixedSize(420, 730)
         self.move(200, 100)
 
@@ -236,9 +235,10 @@ class MainWindow(QMainWindow):
         key_check.setFixedWidth(50)
         simulation_layout_2.addWidget(key_check)
 
-        btn_input = QPushButton("选择文件")
-        btn_input.clicked.connect(self.btn_input_clicked)
-        simulation_layout_2.addWidget(btn_input)
+        btn_import_excitation = QPushButton("选择文件")
+        btn_import_excitation.clicked.connect(
+            self.btn_import_excitation_clicked)
+        simulation_layout_2.addWidget(btn_import_excitation)
 
         key_label = QLabel("忽略行数")
         key_label.setFixedWidth(50)
@@ -278,8 +278,9 @@ class MainWindow(QMainWindow):
 
         # 定时器
         self.timer = QTimer(self)
-        self.timer.setInterval(5)  # 每 5 毫秒触发一次
-        self.timer.timeout.connect(self.update_simulation)
+        self.timer.setInterval(1)  # 每 5 毫秒触发一次
+        self.timer.timeout.connect(self.update_simulation,
+                                   type=Qt.QueuedConnection)
 
         self.transient_window = None
         self.bode_window = None
@@ -295,6 +296,34 @@ class MainWindow(QMainWindow):
                         self.frequency_window]
         return windows_list
 
+    def get_system_params(self):
+        #
+        try:
+            self.msd.m = float(self.msd_params_boxes[0].text())
+            self.msd.c = float(self.msd_params_boxes[1].text())
+            self.msd.k = float(self.msd_params_boxes[2].text())
+        except ValueError:
+            self.update_status_infos("Error: m, c and k must be numbers.")
+            return False
+        return True
+
+    def get_pid_params(self):
+        #
+        try:
+            self.pid.kp = float(self.ctrl_boxes[0].text())
+            self.pid.ki = float(self.ctrl_boxes[1].text())
+            self.pid.kd = float(self.ctrl_boxes[2].text())
+        except ValueError:
+            self.update_status_infos("Error: PID params must not be empty.")
+            return False
+
+        try:
+            self.target_value = float(self.ctrl_boxes[3].text())
+        except ValueError:
+            self.ctrl_boxes[3].setText("0.0")
+
+        return True
+
     def btn_show_infos_clicked(self):
         dialog = QDialog(self)
         dialog.setWindowTitle("基本信息")
@@ -303,9 +332,10 @@ class MainWindow(QMainWindow):
 
         layout = QVBoxLayout()
 
-        m = float(self.msd_params_boxes[0].text())
-        c = float(self.msd_params_boxes[1].text())
-        k = float(self.msd_params_boxes[2].text())
+        if not self.get_system_params():
+            return
+
+        m, c, k = self.msd.m, self.msd.c, self.msd.k
 
         wn = np.sqrt(k/m)
         zt = c/2/np.sqrt(m*k)
@@ -345,7 +375,12 @@ class MainWindow(QMainWindow):
         layout.addWidget(label2)
         layout.addWidget(label3)
 
-        Gs, Gb = self.get_system_transfer_functions()
+        result = self.get_system_transfer_functions()
+
+        if not result:
+            return
+        else:
+            Gs, Gb = result
 
         # 传递函数极点
         poles = ct.poles(Gs)
@@ -369,7 +404,7 @@ class MainWindow(QMainWindow):
         dialog.setLayout(layout)
         dialog.exec()  # 阻塞式弹出
 
-    def btn_input_clicked(self):
+    def btn_import_excitation_clicked(self):
 
         file_name, _ = QFileDialog.getOpenFileName(
             self,
@@ -388,16 +423,19 @@ class MainWindow(QMainWindow):
     def system_params_initialization(self):
 
         self.msd.reset()
-        self.msd.m = float(self.msd_params_boxes[0].text())
-        self.msd.c = float(self.msd_params_boxes[1].text())
-        self.msd.k = float(self.msd_params_boxes[2].text())
+        if not self.get_system_params():
+            return False
 
         self.pid.reset()
-        self.pid.kp = float(self.ctrl_boxes[0].text())
-        self.pid.ki = float(self.ctrl_boxes[1].text())
-        self.pid.kd = float(self.ctrl_boxes[2].text())
+        if not self.get_pid_params():
+            return False
 
-        self.time_stop = float(self.sim_boxes[2].text())
+        try:
+            self.time_stop = float(self.sim_boxes[2].text())
+        except ValueError:
+            self.update_status_infos("Error: stop_time should be a number.")
+            return False
+
         self.step_now = 0
         self.time_now = 0.0
 
@@ -409,14 +447,24 @@ class MainWindow(QMainWindow):
         signal_type = self.sim_comboboxes[0].currentIndex()
 
         signal = np.zeros(nt, dtype=float)
-        amplitude = float(self.sim_boxes[0].text())
+
+        try:
+            amplitude = float(self.sim_boxes[0].text())
+        except ValueError:
+            self.update_status_infos("Error: amplitude should be a number.")
+            return False
 
         if signal_type == 1:  # step
             step_start = int(0.1 / dt)
             signal[step_start:] = amplitude
 
         elif signal_type == 2:  # sine
-            omega = 2 * np.pi * float(self.sim_boxes[1].text())
+            try:
+                omega = 2 * np.pi * float(self.sim_boxes[1].text())
+            except ValueError:
+                self.update_status_infos("Error: omega should be a number.")
+                return False
+
             signal = amplitude * np.sin(omega * self.time)
 
         else:  # impulse
@@ -457,15 +505,19 @@ class MainWindow(QMainWindow):
         self.transient_window.plot_widget_2.setXRange(0, self.time_stop)
         self.transient_window.plot_widget_3.setXRange(0, self.time_stop)
 
+        self.update_status_infos("System initialization completes.")
+        return True
+
     def btn_simulate_clicked(self):
 
-        self.status_label.setText("Simulation starts.")
+        self.update_status_infos("Simulation starts.")
 
         # 停止定时器
         if self.timer.isActive():
             self.timer.stop()
 
-        self.system_params_initialization()
+        if not self.system_params_initialization():
+            return
 
         for id in range(len(self.time)-1):
             target_list = [self.msd.x, self.msd.v, self.msd.a, 0.0]
@@ -498,7 +550,8 @@ class MainWindow(QMainWindow):
         """
         self.status_label.setText("Animation starts.")
 
-        self.system_params_initialization()
+        if not self.system_params_initialization():
+            return
 
         # 停止并重新启动定时器，开始动画
         if self.timer.isActive():
@@ -554,6 +607,13 @@ class MainWindow(QMainWindow):
 
     def btn_bodeplot_clicked(self):
 
+        result = self.get_system_transfer_functions()
+
+        if not result:
+            return
+        else:
+            Gs, Gb = result
+
         if self.bode_window is None:
             self.bode_window = BodeWindow()   # 新建
 
@@ -565,8 +625,6 @@ class MainWindow(QMainWindow):
 
         plot_widget_i = self.bode_window.plot_widget_1
         plot_widget_j = self.bode_window.plot_widget_2
-
-        Gs, Gb = self.get_system_transfer_functions()
 
         # 开环频率特性
         mag, phase, omega = ct.frequency_response(Gs)
@@ -617,18 +675,20 @@ class MainWindow(QMainWindow):
 
     def get_system_transfer_functions(self):
 
-        m = float(self.msd_params_boxes[0].text())
-        c = float(self.msd_params_boxes[1].text())
-        k = float(self.msd_params_boxes[2].text())
+        if not self.get_system_params():
+            return None
+
+        m, c, k = self.msd.m, self.msd.c, self.msd.k
 
         Gs = ct.tf([c, k], [m, c, k])
 
         control_type = self.ctrl_comboboxes[0].currentIndex()
 
         if control_type < 3:
-            kp = float(self.ctrl_boxes[0].text())
-            ki = float(self.ctrl_boxes[1].text())
-            kd = float(self.ctrl_boxes[2].text())
+            if not self.get_pid_params():
+                return None
+
+            kp, ki, kd = self.pid.kp, self.pid.ki, self.pid.kd
 
             numx = [1, 0]
             denx = [kd, kp, ki]
@@ -654,7 +714,12 @@ class MainWindow(QMainWindow):
 
     def btn_frequency_analyses_clicked(self):
 
-        Gs, Gb = self.get_system_transfer_functions()
+        result = self.get_system_transfer_functions()
+
+        if not result:
+            return
+        else:
+            Gs, Gb = result
 
         # 绘图
         if self.frequency_window is None:
@@ -666,46 +731,11 @@ class MainWindow(QMainWindow):
 
         self.frequency_window.clear_plots()
 
-        plot_widget_i = self.frequency_window.plot_widget_1
-        plot_widget_j = self.frequency_window.plot_widget_2
+        # 开环\闭环频率特性分析
+        self.frequency_window.plot_frequency_figures(Gs, 'b', "open loop")
+        self.frequency_window.plot_frequency_figures(Gb, 'r', "closed loop")
 
-        # 开环频率特性分析
-        # Bode 图
-        mag, phase, omega = ct.frequency_response(Gs)
-
-        plot_widget_i.plot(omega, 20*np.log10(mag), pen=pg.mkPen(
-            color='r', width=2), name='uncontrol')
-
-        # Nyquist 图
-        realpart = mag * np.cos(phase)
-        imagpart = mag * np.sin(phase)
-
-        xdata = np.concatenate([+realpart[::-1], realpart])
-        ydata = np.concatenate([-imagpart[::-1], imagpart])
-
-        plot_widget_j.plot(xdata, ydata, pen=pg.mkPen(
-            color='r', width=2), name='uncontrol')
-
-        # 闭环频率特性分析
-        mag, phase, omega = ct.frequency_response(Gb)
-
-        plot_widget_i.plot(omega, 20*np.log10(mag), pen=pg.mkPen(
-            color='g', width=2), name='control')
-
-        realpart = mag * np.cos(phase)
-        imagpart = mag * np.sin(phase)
-
-        xdata = np.concatenate([+realpart[::-1], realpart])
-        ydata = np.concatenate([-imagpart[::-1], imagpart])
-
-        plot_widget_j.plot(xdata, ydata, pen=pg.mkPen(
-            color='g', width=2), name="control")
-
-        # 添加横轴
-        plot_widget_i.addLine(y=0, pen=pg.mkPen(color='k', width=1))
-        # 添加横轴与纵轴
-        plot_widget_j.addLine(x=0, pen=pg.mkPen(color='k', width=1))
-        plot_widget_j.addLine(y=0, pen=pg.mkPen(color='k', width=1))
+        self.frequency_window.add_auxiliary_parts()
 
     def _apply_styles(self):
         palette = self.palette()
@@ -733,16 +763,36 @@ class MainWindow(QMainWindow):
             QPushButton:hover {
                 background-color: #0056b3;
             }
-            QPushButton:disabled {
-                background-color: #E3E3E3;  /* 灰色背景 */
-                color: #A6A6A6;             /* 浅灰文本 */
-                border: 1px solid #D0D0D0;  /* 灰色边框 */
-            }
             QLineEdit, QDoubleSpinBox, QComboBox {
                 padding: 5px;
                 border: none;
                 border-radius: 3px;
             }
+
+            /* 下拉按钮样式 */
+            QComboBox::drop-down {
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: 13px;                /* 按钮宽度 */
+                border-left: 1px solid #CCCCCC;  /* 分隔线 */
+                background-color: #60A5FA;  /* 淡青色背景 */
+                border-top-right-radius: 3px;
+                border-bottom-right-radius: 3px;
+            }
+            /* 下拉箭头样式 */
+            QComboBox::down-arrow {
+                width: 8px;   /* 箭头宽度 */
+                height: 8px;  /* 箭头高度 */
+            }
+            /* 下拉列表样式 */
+            QComboBox QAbstractItemView {
+                border: 1px solid #D1D5DB;
+                border-radius: 4px;
+                background-color: #FFFFFF;
+                selection-background-color: #3B82F6;
+                selection-color: #333333;
+            }
+
             QLabel {
                 padding: 2px 0;
             }
@@ -754,7 +804,7 @@ class MainWindow(QMainWindow):
             }
             /* Tab bar 区域 */
             QTabBar::tab {
-                border: 1px soild #d0d0d0;
+                border: 1px solid #d0d0d0;
                 padding: 6px 10px;
                 margin: 2px;
                 color: #333;
@@ -766,7 +816,6 @@ class MainWindow(QMainWindow):
                 background: #0078d4;   /* Windows 11 蓝 */
                 color: white;
             }
-
             /* 未选中时 */
             QTabBar::tab:!selected {
                 background: transparent;

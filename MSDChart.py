@@ -5,17 +5,18 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget,
                                QVBoxLayout, QHBoxLayout, QLabel,
                                QGroupBox, QLineEdit, QLabel,
                                QComboBox, QPushButton, QDialog)
+from PySide6.QtGui import QIcon
 import pyqtgraph as pg
-# from OpenGL.GL import *
-# from OpenGL.GL.shaders import *
 
 import numpy as np
+import control as ct
 
 
 class TransientWindow(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent=parent)
         self.setWindowTitle("Transient Response")
+        self.setWindowIcon(QIcon("icon/porthole.png"))
         self.setFixedSize(400, 730)
         self.move(630, 100)
         self.show()
@@ -97,6 +98,7 @@ class BodeWindow(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent=parent)
         self.setWindowTitle("Bode Chart")
+        self.setWindowIcon(QIcon("icon/porthole.png"))
         self.setFixedSize(400, 600)
         self.move(630, 100)
         self.show()
@@ -152,6 +154,7 @@ class FrequencyWindow(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent=parent)
         self.setWindowTitle("Frequency Chart")
+        self.setWindowIcon(QIcon("icon/porthole.png"))
         self.setFixedSize(400, 600)
         self.move(630, 100)
         self.show()
@@ -187,12 +190,6 @@ class FrequencyWindow(QWidget):
         self.plot_widget_2.getAxis('left').setPen('black')  # 设置轴线颜色
         self.plot_widget_2.getAxis('bottom').setPen('black')  # 设置轴线颜色
         self.plot_widget_2.addLegend(labelTextColor='blue')
-        self.plot_widget_2.plot([-1], [0], pen=None,
-                                symbol="+", name='(-1,j0)')
-
-        # 添加横轴与纵轴
-        self.plot_widget_2.addLine(x=0, pen=pg.mkPen(color='k', width=1))
-        self.plot_widget_2.addLine(y=0, pen=pg.mkPen(color='k', width=1))
 
         self.coord_label_2 = QLabel("X: , Y: ")
 
@@ -210,6 +207,43 @@ class FrequencyWindow(QWidget):
             lambda pos: self.update_coords(pos, self.plot_widget_2, self.coord_label_2))
 
         self.show()
+
+    def add_auxiliary_parts(self):
+
+        plot_widget_i = self.plot_widget_1
+        plot_widget_j = self.plot_widget_2
+
+        # Bode: 添加横轴
+        plot_widget_i.addLine(y=0, pen=pg.mkPen(color='k', width=1))
+
+        # Nyquist: 添加 (-1,j0) 点
+        plot_widget_j.plot([-1], [0], pen=None,
+                           symbol="+", name='(-1,j0)')
+
+        # 添加横轴与纵轴
+        plot_widget_j.addLine(x=0, pen=pg.mkPen(color='k', width=1))
+        plot_widget_j.addLine(y=0, pen=pg.mkPen(color='k', width=1))
+
+    def plot_frequency_figures(self, Gs: ct.xferfcn.TransferFunction, color: str, name: str):
+
+        plot_widget_i = self.plot_widget_1
+        plot_widget_j = self.plot_widget_2
+
+        mag, phase, omega = ct.frequency_response(Gs)
+
+        # Bode
+        plot_widget_i.plot(omega, 20*np.log10(mag), pen=pg.mkPen(
+            color=color, width=2), name=name)
+
+        # Nyquist
+        realpart = mag * np.cos(phase)
+        imagpart = mag * np.sin(phase)
+
+        xdata = np.concatenate([+realpart[::-1], realpart])
+        ydata = np.concatenate([-imagpart[::-1], imagpart])
+
+        plot_widget_j.plot(xdata, ydata, pen=pg.mkPen(
+            color=color, width=2), name=name)
 
     @staticmethod
     def update_coords(pos, plot_widget: pg.PlotWidget, label: pg.TextItem):
@@ -246,6 +280,7 @@ class ZPKDialog(QDialog):
         self.parent = parent
 
         self.setWindowTitle("配置零点-极点-增益")
+        self.setWindowIcon(QIcon("icon/porthole.png"))
         self.setFixedSize(300, 160)
 
         layout = QVBoxLayout()
