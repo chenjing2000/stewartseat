@@ -611,9 +611,7 @@ class TabPage2(QWidget):
         self.parent.msd.c = float(self.parent.msd_params_boxes[1].text())
         self.parent.msd.k = float(self.parent.msd_params_boxes[2].text())
 
-        self.parent.msd.x = 0.0
-        self.parent.msd.v = 0.0
-        self.parent.msd.a = 0.0
+        self.parent.msd.reset()
 
         self.time_stop = float(self.parent.sim_boxes[2].text())
 

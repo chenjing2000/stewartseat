@@ -87,6 +87,11 @@ class PIDController:
         output = max(min(output, 1e5), -1e5)  # 最大输出载荷 100,000 N
         return output
 
+    def reset(self):
+        # 重置积分微分参数
+        self.integral = 0.0
+        self.error_prev = 0.0
+
 
 # 以下是质量-阻尼-弹簧系统中各零部件的图形绘制方法
 vertex_shader_source = """
@@ -631,7 +636,7 @@ class MassSpringDamperGL(QOpenGLWidget):
             [2, 0, 0, 0],
             [0, 2, 0, 0],
             [0, 0, 1, 0],
-            [0, -0.3, 0, 1]
+            [0, -0.4, 0, 1]
         ], dtype=np.float32)
 
         # 4. 将投影矩阵传递给所有部件的着色器

@@ -30,7 +30,7 @@ class MainWindow(QMainWindow):
 
         # Main components
         self.msd = MSDPlant(mass=10.0, damping=1.0, stiffness=10.0)
-        self.pid = PIDController(kp=100.0, ki=1.0, kd=10.0)
+        self.pid = PIDController(kp=0.0, ki=0.0, kd=0.0)
         self.excitation = []
         self.x_series = []
         self.v_series = []
@@ -387,14 +387,12 @@ class MainWindow(QMainWindow):
 
     def system_params_initialization(self):
 
+        self.msd.reset()
         self.msd.m = float(self.msd_params_boxes[0].text())
         self.msd.c = float(self.msd_params_boxes[1].text())
         self.msd.k = float(self.msd_params_boxes[2].text())
 
-        self.msd.x = 0.0
-        self.msd.v = 0.0
-        self.msd.a = 0.0
-
+        self.pid.reset()
         self.pid.kp = float(self.ctrl_boxes[0].text())
         self.pid.ki = float(self.ctrl_boxes[1].text())
         self.pid.kd = float(self.ctrl_boxes[2].text())
@@ -482,15 +480,15 @@ class MainWindow(QMainWindow):
             self.a_series[id] = self.msd.a
             self.f_series[id] = force
 
-        if len(self.x_series) > 0:
-            self.transient_window.plot_curve_11.setData(
-                self.time[:-1], self.x_series[:-1])
-            self.transient_window.plot_curve_12.setData(
-                self.time[:-1], self.excitation[:-1])
-            self.transient_window.plot_curve_2.setData(
-                self.time[:-1], self.a_series[:-1])
-            self.transient_window.plot_curve_3.setData(
-                self.time[:-1], self.f_series[:-1])
+        # 绘制曲线
+        self.transient_window.plot_curve_11.setData(
+            self.time[:-1], self.x_series[:-1])
+        self.transient_window.plot_curve_12.setData(
+            self.time[:-1], self.excitation[:-1])
+        self.transient_window.plot_curve_2.setData(
+            self.time[:-1], self.a_series[:-1])
+        self.transient_window.plot_curve_3.setData(
+            self.time[:-1], self.f_series[:-1])
 
         self.status_label.setText("Simulation stops.")
 
