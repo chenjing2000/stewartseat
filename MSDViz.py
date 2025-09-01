@@ -271,6 +271,7 @@ class MainWindow(QMainWindow):
         tabpage1_layout.addWidget(self.simulation_group)
 
         self.status_label = QLabel("Ready.")
+        self.tabpage2.status_changed.connect(self.update_status_infos)
         main_layout.addWidget(self.status_label)
 
         self._apply_styles()
@@ -283,6 +284,9 @@ class MainWindow(QMainWindow):
         self.transient_window = None
         self.bode_window = None
         self.frequency_window = None
+
+    def update_status_infos(self, message):
+        self.status_label.setText(message)
 
     def get_windows(self):
 
@@ -439,7 +443,7 @@ class MainWindow(QMainWindow):
         self.a_series = np.zeros(nt, dtype=float)
         self.f_series = np.zeros(nt, dtype=float)
 
-        if self.transient_window is None or not self.transient_window.isVisible():
+        if self.transient_window is None:
             self.transient_window = TransientWindow()   # 新建
 
         self.transient_window.show()
@@ -552,29 +556,53 @@ class MainWindow(QMainWindow):
 
     def btn_bodeplot_clicked(self):
 
-        m = float(self.msd_params_boxes[0].text())
-        c = float(self.msd_params_boxes[1].text())
-        k = float(self.msd_params_boxes[2].text())
-
-        Gs = ct.tf([c, k], [m, c, k])
-
-        mag, phase, omega = ct.frequency_response(Gs)
-
-        if self.bode_window is None or not self.bode_window.isVisible():
+        if self.bode_window is None:
             self.bode_window = BodeWindow()   # 新建
 
         self.bode_window.show()
         self.bode_window.raise_()
         self.bode_window.activateWindow()
 
-        self.bode_window.plot_curve_11.setData(omega, 20*np.log10(mag))
-        self.bode_window.plot_curve_12.setData(omega, 20*np.log10(mag * omega))
-        self.bode_window.plot_curve_13.setData(
-            omega, 20*np.log10(mag * omega ** 2))
+        self.bode_window.clear_plots()
 
-        self.bode_window.plot_curve_21.setData(omega, phase)
-        self.bode_window.plot_curve_22.setData(omega, phase + np.pi/2)
-        self.bode_window.plot_curve_23.setData(omega, phase + np.pi)
+        plot_widget_i = self.bode_window.plot_widget_1
+        plot_widget_j = self.bode_window.plot_widget_2
+
+        Gs, Gb = self.get_system_transfer_functions()
+
+        # 开环频率特性
+        mag, phase, omega = ct.frequency_response(Gs)
+
+        plot_widget_i.plot(omega, 20*np.log10(mag), pen=pg.mkPen(
+            color='b', width=2), name='位移幅值特性')
+        plot_widget_i.plot(omega, 20*np.log10(mag * omega), pen=pg.mkPen(
+            color='r', width=2), name='速度幅值特性')
+        plot_widget_i.plot(omega, 20*np.log10(mag * omega ** 2), pen=pg.mkPen(
+            color='g', width=2), name='加速度幅值特性')
+
+        plot_widget_j.plot(omega, phase, pen=pg.mkPen(
+            color='b', width=2), name='位移相位特性')
+        plot_widget_j.plot(omega, phase + np.pi/2, pen=pg.mkPen(
+            color='r', width=2), name='速度相位特性')
+        plot_widget_j.plot(omega, phase + np.pi, pen=pg.mkPen(
+            color='g', width=2), name='加速度相位特性')
+
+        # 闭环频率特性
+        mag, phase, omega = ct.frequency_response(Gb)
+
+        plot_widget_i.plot(omega, 20*np.log10(mag), pen=pg.mkPen(
+            color='b', width=2, style=Qt.DashLine), name='闭环位移幅值特性')
+        plot_widget_i.plot(omega, 20*np.log10(mag * omega), pen=pg.mkPen(
+            color='r', width=2, style=Qt.DashLine), name='闭环速度幅值特性')
+        plot_widget_i.plot(omega, 20*np.log10(mag * omega ** 2), pen=pg.mkPen(
+            color='g', width=2, style=Qt.DashLine), name='闭环加速度幅值特性')
+
+        plot_widget_j.plot(omega, phase, pen=pg.mkPen(
+            color='b', width=2, style=Qt.DashLine), name='闭环位移相位特性')
+        plot_widget_j.plot(omega, phase + np.pi/2, pen=pg.mkPen(
+            color='r', width=2, style=Qt.DashLine), name='闭环速度相位特性')
+        plot_widget_j.plot(omega, phase + np.pi, pen=pg.mkPen(
+            color='g', width=2, style=Qt.DashLine), name='闭环加速度相位特性')
 
     def closeEvent(self, event):
         # 主窗口关闭前，先关闭子窗口
@@ -631,18 +659,17 @@ class MainWindow(QMainWindow):
         Gs, Gb = self.get_system_transfer_functions()
 
         # 绘图
-        if self.frequency_window is None or not self.frequency_window.isVisible():
+        if self.frequency_window is None:
             self.frequency_window = FrequencyWindow()   # 新建
 
         self.frequency_window.show()
         self.frequency_window.raise_()
         self.frequency_window.activateWindow()
 
+        self.frequency_window.clear_plots()
+
         plot_widget_i = self.frequency_window.plot_widget_1
         plot_widget_j = self.frequency_window.plot_widget_2
-
-        for widget in [plot_widget_i, plot_widget_j]:
-            self.tabpage2.clear_plot_widget(widget)
 
         # 开环频率特性分析
         # Bode 图

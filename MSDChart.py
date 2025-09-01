@@ -77,6 +77,11 @@ class TransientWindow(QWidget):
         layout.addWidget(self.plot_widget_3, 1)
         layout.addWidget(self.coord_label_3)
 
+        self.plot_widgets = [self.plot_widget_1, self.plot_widget_2,
+                             self.plot_widget_3]
+        self.clear_plots = lambda: FrequencyWindow.clear_plots(
+            self.plot_widgets)
+
         # 连接鼠标移动事件到自定义槽函数
         self.plot_widget_1.scene().sigMouseMoved.connect(
             lambda pos: FrequencyWindow.update_coords(pos, self.plot_widget_1, self.coord_label_1))
@@ -108,12 +113,6 @@ class BodeWindow(QWidget):
         self.plot_widget_1.getAxis('left').setPen('black')  # 设置轴线颜色
         self.plot_widget_1.getAxis('bottom').setPen('black')  # 设置轴线颜色
         self.plot_widget_1.addLegend(labelTextColor='blue')
-        self.plot_curve_11 = self.plot_widget_1.plot(
-            [], [], pen=pg.mkPen(color='r', width=2), name='displacement')
-        self.plot_curve_12 = self.plot_widget_1.plot(
-            [], [], pen=pg.mkPen(color='g', width=2), name='velocity')
-        self.plot_curve_13 = self.plot_widget_1.plot(
-            [], [], pen=pg.mkPen(color='b', width=2), name='acceleration')
 
         self.coord_label_1 = QLabel("X: , Y: ")
 
@@ -130,17 +129,15 @@ class BodeWindow(QWidget):
         self.plot_widget_2.getAxis('left').setPen('black')  # 设置轴线颜色
         self.plot_widget_2.getAxis('bottom').setPen('black')  # 设置轴线颜色
         self.plot_widget_2.addLegend(labelTextColor='blue')
-        self.plot_curve_21 = self.plot_widget_2.plot(
-            [], [], pen=pg.mkPen(color='r', width=2), name='displacement')
-        self.plot_curve_22 = self.plot_widget_2.plot(
-            [], [], pen=pg.mkPen(color='g', width=2), name='velocity')
-        self.plot_curve_23 = self.plot_widget_2.plot(
-            [], [], pen=pg.mkPen(color='b', width=2), name='acceleration')
 
         self.coord_label_2 = QLabel("X: , Y: ")
 
         layout.addWidget(self.plot_widget_2, 1)
         layout.addWidget(self.coord_label_2)
+
+        self.plot_widgets = [self.plot_widget_1, self.plot_widget_2]
+        self.clear_plots = lambda: FrequencyWindow.clear_plots(
+            self.plot_widgets)
 
         # 连接鼠标移动事件到自定义槽函数
         self.plot_widget_1.scene().sigMouseMoved.connect(
@@ -202,6 +199,10 @@ class FrequencyWindow(QWidget):
         layout.addWidget(self.plot_widget_2, 2)
         layout.addWidget(self.coord_label_2)
 
+        self.plot_widgets = [self.plot_widget_1, self.plot_widget_2]
+        self.clear_plots = lambda: FrequencyWindow.clear_plots(
+            self.plot_widgets)
+
         # 连接鼠标移动事件到自定义槽函数
         self.plot_widget_1.scene().sigMouseMoved.connect(
             lambda pos: self.update_coords(pos, self.plot_widget_1, self.coord_label_1))
@@ -226,6 +227,17 @@ class FrequencyWindow(QWidget):
                 yp = 10 ** yp
 
             label.setText(f"X: {xp:.2f}, Y:{yp:.2f}")
+
+    @staticmethod
+    def clear_plots(plot_widgets: list[pg.PlotWidget]):
+        # 清除子图内的元素
+        for widget in plot_widgets:
+            widget.setTitle("")
+            widget.clear()
+            if widget.plotItem.legend is not None:
+                widget.plotItem.legend.scene().removeItem(widget.plotItem.legend)
+                widget.plotItem.legend = None
+            widget.plotItem.addLegend()
 
 
 class ZPKDialog(QDialog):

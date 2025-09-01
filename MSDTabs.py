@@ -1,12 +1,11 @@
 
-from PySide6.QtCore import QTimer, Qt
+from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget,
                                QVBoxLayout, QHBoxLayout, QLabel,
                                QGroupBox, QLineEdit, QLabel,
                                QComboBox, QPushButton, QDialog,
                                QSpacerItem, QSizePolicy)
-from PySide6.QtGui import (QPalette, QColor, QDoubleValidator,
-                           QIntValidator, QFontMetrics)
+from PySide6.QtGui import QDoubleValidator
 
 import numpy as np
 import control as ct
@@ -15,6 +14,8 @@ from MSDChart import *
 
 
 class TabPage2(QWidget):
+    status_changed = Signal(str)
+
     def __init__(self, parent=None):
         super().__init__(parent=parent)
         self.parent = parent
@@ -264,8 +265,7 @@ class TabPage2(QWidget):
                 den[id] = float(box_str)
 
         if np.allclose(num, 0, 0, 1e-6) or np.allclose(den, 0, 0, 1e-6):
-            self.parent.status_label.setText(
-                "Numerator or denominator is Null.")
+            self.status_changed.emit("Numerator or denominator is Null.")
             return False
 
         self.Hs = ct.minreal(ct.tf(num, den))
@@ -286,19 +286,18 @@ class TabPage2(QWidget):
         # 1. impulse response
         t, y = ct.impulse_response(self.Hs, T=time)
 
-        if self.transient_window is None or not self.transient_window.isVisible():
+        if self.transient_window is None:
             self.transient_window = TransientWindow()   # 新建
 
         self.transient_window.show()
         self.transient_window.raise_()
         self.transient_window.activateWindow()
 
+        self.transient_window.clear_plots()
+
         plot_widget_i = self.transient_window.plot_widget_1
         plot_widget_j = self.transient_window.plot_widget_2
         plot_widget_k = self.transient_window.plot_widget_3
-
-        for widget in [plot_widget_i, plot_widget_j, plot_widget_k]:
-            self.clear_plot_widget(widget)
 
         plot_widget_i.plot(t, y, pen=pg.mkPen(
             color='b', width=2), name="脉冲响应")
@@ -324,15 +323,6 @@ class TabPage2(QWidget):
 
         plot_widget_k.setLabel("left", "displacement (m)")
 
-    def clear_plot_widget(self, plot_widget):
-        # 清除子图内的元素
-        plot_widget.setTitle("")
-        plot_widget.clear()
-        if plot_widget.plotItem.legend is not None:
-            plot_widget.plotItem.legend.scene().removeItem(plot_widget.plotItem.legend)
-            plot_widget.plotItem.legend = None
-        plot_widget.plotItem.addLegend()
-
     def btn_frequency_analyses_clicked(self):
 
         if not self.get_transfer_function_from_boxes():
@@ -340,18 +330,17 @@ class TabPage2(QWidget):
 
         mag, phase, omega = ct.frequency_response(self.Hs)
 
-        if self.frequency_window is None or not self.frequency_window.isVisible():
+        if self.frequency_window is None:
             self.frequency_window = FrequencyWindow()   # 新建
 
         self.frequency_window.show()
         self.frequency_window.raise_()
         self.frequency_window.activateWindow()
 
+        self.frequency_window.clear_plots()
+
         plot_widget_i = self.frequency_window.plot_widget_1
         plot_widget_j = self.frequency_window.plot_widget_2
-
-        for widget in [plot_widget_i, plot_widget_j]:
-            self.clear_plot_widget(widget)
 
         plot_widget_i.plot(omega, 20*np.log10(mag), pen=pg.mkPen(
             color='b', width=2), name='uncontrol')
@@ -385,15 +374,13 @@ class TabPage2(QWidget):
         self.discrete_window.raise_()
         self.discrete_window.activateWindow()
 
+        self.discrete_window.clear_plots()
+
         plot_widget_i = self.discrete_window.plot_widget_1
         plot_widget_j = self.discrete_window.plot_widget_2
         plot_widget_k = self.discrete_window.plot_widget_3
 
-        plot_widget_i.plotItem.clear()
-        plot_widget_j.plotItem.clear()
-        plot_widget_k.plotItem.clear()
-
-        self.parent.status_label.setText("Simulation starts.")
+        self.status_changed.emit("Simulation starts.")
 
         dt = self.parent.dt
         Gz = ct.c2d(self.Hs, dt, 'tustin')
@@ -408,7 +395,7 @@ class TabPage2(QWidget):
         nb = len(den)
 
         if len(num) > len(den):
-            self.parent.status_label.setText(
+            self.status_changed.emit(
                 "Order of num must be less than that of den in G(s).")
             return
 
@@ -460,7 +447,7 @@ class TabPage2(QWidget):
         plot_widget_k.plot(self.time[:-1], self.f_series[:-1], pen=pg.mkPen(
             color='b', width=2), name="控制载荷")
 
-        self.parent.status_label.setText("Simulation finishes.")
+        self.status_changed.emit("Simulation finishes.")
 
     def get_system_transfer_functions(self):
 
@@ -504,19 +491,18 @@ class TabPage2(QWidget):
 
         self.system_params_initialization()
 
-        if self.transient_window_2 is None or not self.transient_window_2.isVisible():
+        if self.transient_window_2 is None:
             self.transient_window_2 = TransientWindow()   # 新建
 
         self.transient_window_2.show()
         self.transient_window_2.raise_()
         self.transient_window_2.activateWindow()
 
+        self.transient_window_2.clear_plots()
+
         plot_widget_i = self.transient_window_2.plot_widget_1
         plot_widget_j = self.transient_window_2.plot_widget_2
         plot_widget_k = self.transient_window_2.plot_widget_3
-
-        for widget in [plot_widget_i, plot_widget_j, plot_widget_k]:
-            self.clear_plot_widget(widget)
 
         dt = self.parent.dt
         time_stop = float(self.parent.sim_boxes[2].text())
@@ -563,18 +549,17 @@ class TabPage2(QWidget):
 
         self.system_params_initialization()
 
-        if self.frequency_window_2 is None or not self.frequency_window_2.isVisible():
+        if self.frequency_window_2 is None:
             self.frequency_window_2 = FrequencyWindow()   # 新建
 
         self.frequency_window_2.show()
         self.frequency_window_2.raise_()
         self.frequency_window_2.activateWindow()
 
+        self.frequency_window_2.clear_plots()
+
         plot_widget_i = self.frequency_window_2.plot_widget_1
         plot_widget_j = self.frequency_window_2.plot_widget_2
-
-        for widget in [plot_widget_i, plot_widget_j]:
-            self.clear_plot_widget(widget)
 
         Gs, Gb = self.get_system_transfer_functions()
 
@@ -660,7 +645,7 @@ class TabPage2(QWidget):
             signal[step_start:step_stop] = amplitude
 
         if self.parent.sim_checkboxes[0].isChecked():
-            self.parent.status_label.setText("外部导入文件方法尚未完成。")
+            self.status_changed.emit("外部导入文件方法尚未完成。")
 
         self.excitation = signal
 
