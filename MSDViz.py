@@ -19,12 +19,12 @@ class MainWindow(QMainWindow):
         self.setFixedSize(420, 730)
         self.move(200, 100)
 
-        self._setup_ui()
-
         self.data = DataGroup()
         self.msd = MSDPlant(
             self.data.mass, self.data.damping, self.data.stiffness)
         self.pid = PIDController(self.data.kp, self.data.ki, self.data.kd)
+
+        self._setup_ui()
 
         self.tabpage1.status_changed.connect(self.update_status_infos)
         self.tabpage2.status_changed.connect(self.update_status_infos)
@@ -44,8 +44,8 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(self.msdviz, 2)  # Take up 2/3 of the space
 
         self.tabpages = QTabWidget()
-        self.tabpage1 = TabPage1(self)
-        self.tabpage2 = TabPage2(self)
+        self.tabpage1 = TabPage1(self.data, self.msd, self.pid, self.msdviz)
+        self.tabpage2 = TabPage2(self.data, self.msd, self.pid, self.tabpage1)
 
         self.tabpages.addTab(self.tabpage1, "基础控制")
         self.tabpages.addTab(self.tabpage2, "传递函数")
@@ -56,7 +56,7 @@ class MainWindow(QMainWindow):
         self.statusBar().setFixedHeight(20)
 
     def update_status_infos(self, message):
-        self.statusBar().showMessage(message, 3000)
+        self.statusBar().showMessage(message, 4000)
 
     def closeEvent(self, event):
         # 主窗口关闭前，先关闭子窗口

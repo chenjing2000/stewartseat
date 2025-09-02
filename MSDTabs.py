@@ -7,25 +7,39 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget,
                                QCheckBox, QFileDialog, QSpacerItem, QSizePolicy)
 from PySide6.QtGui import (QDoubleValidator, QIntValidator, QFontMetrics)
 
+import os
 import numpy as np
 import control as ct
+import csv
 
 from MSDChart import *
+from MSDModel import DataGroup, MSDPlant, PIDController, MassSpringDamperGL
 
 
 class TabPage1(QWidget):
     status_changed = Signal(str)
     data_updated = Signal()
 
-    def __init__(self, parent=None):
-        super().__init__(parent=parent)
-        self.parent = parent
+    def __init__(self, data: DataGroup,
+                 msd: MSDPlant,
+                 pid: PIDController,
+                 msdviz: MassSpringDamperGL,
+                 parent=None):
+
+        super().__init__()
+
+        self.data = data
+        self.msd = msd
+        self.pid = pid
+        self.msdviz = msdviz
 
         self._setup_ui()
 
         self.transient_window = None
         self.bode_window = None
         self.frequency_window = None
+
+        self.excitation_file = None
 
         # 定时器
         self.timer = QTimer(self)
@@ -250,24 +264,28 @@ class TabPage1(QWidget):
     def collect_data(self):
 
         try:
-            self.parent.data.mass = float(self.msd_boxes[0].text())
-            self.parent.data.damping = float(self.msd_boxes[1].text())
-            self.parent.data.stiffness = float(self.msd_boxes[2].text())
+            self.data.mass = float(self.msd_boxes[0].text())
+            self.data.damping = float(self.msd_boxes[1].text())
+            self.data.stiffness = float(self.msd_boxes[2].text())
 
-            self.parent.data.kp = float(self.pid_boxes[0].text())
-            self.parent.data.ki = float(self.pid_boxes[1].text())
-            self.parent.data.kd = float(self.pid_boxes[2].text())
+            self.data.kp = float(self.pid_boxes[0].text())
+            self.data.ki = float(self.pid_boxes[1].text())
+            self.data.kd = float(self.pid_boxes[2].text())
 
-            self.parent.data.control_type = \
+            self.data.control_type = \
                 self.pid_comboboxes[0].currentIndex()
-            self.parent.data.target_value = \
+            self.data.target_value = \
                 float(self.pid_boxes[3].text())
 
-            self.parent.data.signal_type = \
+            self.data.signal_type = \
                 self.sim_comboboxes[0].currentIndex()
-            self.parent.data.amplitude = float(self.sim_boxes[0].text())
-            self.parent.data.frequency = float(self.sim_boxes[1].text())
-            self.parent.data.time_stop = float(self.sim_boxes[2].text())
+            self.data.amplitude = float(self.sim_boxes[0].text())
+            self.data.frequency = float(self.sim_boxes[1].text())
+            self.data.time_stop = float(self.sim_boxes[2].text())
+
+            # external excitation
+            self.data.isimporting = self.sim_checkboxes[0].isChecked()
+            self.data.skiprows = int(self.sim_boxes[3].text())
 
             self.data_updated.emit()
 
@@ -295,7 +313,7 @@ class TabPage1(QWidget):
 
         layout = QVBoxLayout()
 
-        m, c, k = self.parent.msd.m, self.parent.msd.c, self.parent.msd.k
+        m, c, k = self.msd.m, self.msd.c, self.msd.k
 
         wn = np.sqrt(k/m)
         zt = c/2/np.sqrt(m*k)
@@ -319,8 +337,8 @@ class TabPage1(QWidget):
 
         wb = wn * np.sqrt(zs + np.sqrt(zs**2 + 1))  # bandwidth
 
-        wc = wn * np.sqrt(np.sqrt(1 + 4 * zt**4) - 2 *
-                          zt**2)  # crossover frequency
+        # crossover frequency
+        wc = wn * np.sqrt(np.sqrt(1 + 4 * zt**4) - 2 * zt**2)
 
         PM = np.arctan(2 * zt/np.sqrt(- 2 * zt**2 + np.sqrt(1 + 4 * zt**4)))
 
@@ -366,18 +384,18 @@ class TabPage1(QWidget):
 
     def get_system_transfer_functions(self):
 
-        m = self.parent.msd.m
-        c = self.parent.msd.c
-        k = self.parent.msd.k
+        m = self.msd.m
+        c = self.msd.c
+        k = self.msd.k
 
         Gs = ct.tf([c, k], [m, c, k])
 
-        control_type = self.parent.data.control_type
+        control_type = self.data.control_type
 
         if control_type < 3:
-            kp = self.parent.pid.kp
-            ki = self.parent.pid.ki
-            kd = self.parent.pid.kd
+            kp = self.pid.kp
+            ki = self.pid.ki
+            kd = self.pid.kd
 
             Hs = ct.tf([1, 0], [kd, kp, ki])
 
@@ -399,20 +417,16 @@ class TabPage1(QWidget):
 
     def btn_import_excitation_clicked(self):
 
-        file_name, _ = QFileDialog.getOpenFileName(
+        filename, _ = QFileDialog.getOpenFileName(
             self,
             "选择文件",
             "C:\\",  # 初始路径，可以写 "C:/"
-            "文本文件 (*.txt);;CSV 文件 (*.csv)"
+            "CSV 文件 (*.csv);;文本文件 (*.txt)"
         )
 
-        if file_name:
-            # 限定显示长度（比如 label 宽度）
-            metrics = QFontMetrics(self.parent.status_label.font())
-            file_name_short = metrics.elidedText(
-                file_name, Qt.ElideMiddle, self.parent.status_label.width())
-
-            self.status_changed.emit(file_name_short)
+        if filename:
+            self.data.filename = filename
+            self.status_changed.emit(filename)
 
     def btn_bodeplot_clicked(self):
 
@@ -495,27 +509,28 @@ class TabPage1(QWidget):
         if not self.collect_data():
             return False
 
-        self.parent.msd.reset()
+        self.msd.reset()
 
         self.step_now = 0
         self.time_now = 0.0
 
-        dt = self.parent.data.dt
+        dt = self.data.dt
         self.dt = dt
-        self.time_stop = self.parent.data.time_stop
-        self.target_value = self.parent.data.target_value
-        self.control_type = self.parent.data.control_type
-        self.signal_type = self.parent.data.signal_type
-        self.frequency = self.parent.data.frequency
-        self.amplitude = self.parent.data.amplitude
+        self.time_stop = self.data.time_stop
+        self.target_value = self.data.target_value
+        self.control_type = self.data.control_type
+        self.signal_type = self.data.signal_type
+        self.frequency = self.data.frequency
+        self.amplitude = self.data.amplitude
 
-        self.time = np.arange(0, self.time_stop, dt)
-        nt = len(self.time)
+        self.isimporting = self.data.isimporting
+        self.filename = self.data.filename
+        self.skiprows = self.data.skiprows
 
         self.excitation = self.get_typical_signal()
 
-        if self.sim_checkboxes[0].isChecked():
-            self.status_changed.emit("外部导入文件方法尚未完成。")
+        self.time = np.arange(0, self.time_stop, dt)
+        nt = len(self.time)
 
         self.x_series = np.zeros(nt, dtype=float)
         self.v_series = np.zeros(nt, dtype=float)
@@ -527,6 +542,34 @@ class TabPage1(QWidget):
         return True
 
     def get_typical_signal(self):
+
+        if self.data.isimporting and self.data.filename:
+            result = self.read_data_in_csv(self.data.filename,
+                                           self.data.skiprows)
+            if result:
+                xdata, ydata = result
+            else:
+                self.status_changed.emit("Warning: No data is imported.")
+                return None
+
+            if xdata[-1] - xdata[0] < 0.1:
+                self.status_changed.emit("Warning: Time is too short.")
+                return None
+
+            if xdata[-1] - xdata[0] > self.time_stop:
+                mask = xdata <= self.time_stop
+                ydata = ydata[mask]
+                xdata = xdata[mask]
+                self.status_changed.emit(
+                    f"Warning: Only {self.time_stop} s WILL run.")
+
+            xdata -= xdata[0]
+            time = np.arange(xdata[0], xdata[-1], self.dt)
+            signal = np.interp(time, xdata, ydata)
+
+            self.time_stop = xdata[-1]
+
+            return signal
 
         dt = self.dt
         nt = len(self.time)
@@ -551,6 +594,53 @@ class TabPage1(QWidget):
             signal[step_start:step_stop] = amplitude
 
         return signal
+
+    def read_data_in_csv(self, file_path, skip_rows=0):
+        """
+        使用 csv 模块读取文件并提取前两列数据，支持跳过指定行数。
+
+        参数:
+        - file_path (str): 要读取的文件路径。
+        - skip_rows (int): 从文件开头跳过的行数。默认值为0。
+
+        返回:
+        - tuple: 包含两个列表的元组，分别存储时间数据和位置数据。
+        """
+
+        if not file_path or not os.path.exists(file_path):
+            self.status_changed.emit("Warning: File doesn't exist.")
+            return None
+
+        xdata = []
+        ydata = []
+
+        with open(file_path, 'r', encoding='utf-8') as f:
+            reader = csv.reader(f)
+
+            # 跳过指定的行数
+            for _ in range(skip_rows):
+                try:
+                    next(reader)
+                except StopIteration:
+                    self.status_changed.emit(
+                        "Warning: Maximum rows have skipped.")
+                    return None
+
+            for row in reader:
+                # 确保行不为空且至少有两列
+                if len(row) >= 2:
+                    try:
+                        xdata.append(float(row[0]))
+                        ydata.append(float(row[1]))
+                    except ValueError as e:
+                        self.status_changed.emit(
+                            f"Warning: Invalid row {row}: {e}.")
+                        continue
+                else:
+                    self.status_changed.emit(
+                        "Warning: Invalid row {row} (columns < 2).")
+
+        return np.array(xdata), np.array(ydata)
 
     def simulation_window_preparation(self):
 
@@ -583,19 +673,19 @@ class TabPage1(QWidget):
             self.timer.stop()
 
         for idx in range(len(self.time)-1):
-            target_list = [self.parent.msd.x,
-                           self.parent.msd.v,
-                           self.parent.msd.a,
+            target_list = [self.msd.x,
+                           self.msd.v,
+                           self.msd.a,
                            0.0]
             error = self.target_value - target_list[self.control_type]
 
-            force = self.parent.pid.calculate_force(error)
+            force = self.pid.calculate_force(error)
 
-            self.parent.msd.update(self.excitation[idx:idx+2], force)
+            self.msd.update(self.excitation[idx:idx+2], force)
 
-            self.x_series[idx] = self.parent.msd.x
-            self.v_series[idx] = self.parent.msd.v
-            self.a_series[idx] = self.parent.msd.a
+            self.x_series[idx] = self.msd.x
+            self.v_series[idx] = self.msd.v
+            self.a_series[idx] = self.msd.a
             self.f_series[idx] = force
 
         # 绘制曲线
@@ -636,22 +726,22 @@ class TabPage1(QWidget):
             return
 
         # 计算PID控制力
-        target_list = [self.parent.msd.x,
-                       self.parent.msd.v,
-                       self.parent.msd.a,
+        target_list = [self.msd.x,
+                       self.msd.v,
+                       self.msd.a,
                        0.0]
         error = self.target_value - target_list[self.control_type]
 
-        control_force = self.parent.pid.calculate_force(error)
+        control_force = self.pid.calculate_force(error)
 
         # 更新物理模型
-        self.parent.msd.update(
+        self.msd.update(
             self.excitation[self.step_now:self.step_now+2], control_force)
 
         idx = self.step_now
-        self.x_series[idx] = self.parent.msd.x
-        self.v_series[idx] = self.parent.msd.v
-        self.a_series[idx] = self.parent.msd.a
+        self.x_series[idx] = self.msd.x
+        self.v_series[idx] = self.msd.v
+        self.a_series[idx] = self.msd.a
         self.f_series[idx] = control_force
 
         if idx % 20 == 0:
@@ -666,10 +756,10 @@ class TabPage1(QWidget):
                 self.time[:idx+1], self.f_series[:idx+1])
 
         # 更新OpenGL绘图
-        self.parent.msdviz.mass_motion = self.parent.msd.x
-        self.parent.msdviz.base_motion = self.excitation[self.step_now + 1]
+        self.msdviz.mass_motion = self.msd.x
+        self.msdviz.base_motion = self.excitation[self.step_now + 1]
 
-        self.parent.msdviz.update()
+        self.msdviz.update()
 
         # 更新时间步
         self.step_now += 1
@@ -679,9 +769,18 @@ class TabPage1(QWidget):
 class TabPage2(QWidget):
     status_changed = Signal(str)
 
-    def __init__(self, parent=None):
-        super().__init__(parent=parent)
-        self.parent = parent
+    def __init__(self, data: DataGroup,
+                 msd: MSDPlant,
+                 pid: PIDController,
+                 tabpage1: TabPage1,
+                 parent=None):
+
+        super().__init__()
+
+        self.data = data
+        self.msd = msd
+        self.pid = pid
+        self.tabpage1 = tabpage1
 
         self.Hs = 1.0  # default transfer function
 
@@ -993,7 +1092,7 @@ class TabPage2(QWidget):
         plot_widget_j.setLabel("left", "displacement (m)")
 
         # 3. sine response
-        omega = 2 * np.pi * float(self.parent.tabpage1.sim_boxes[1].text())
+        omega = 2 * np.pi * float(self.tabpage1.sim_boxes[1].text())
         x = np.sin(omega*self.time)
         t, y = ct.forced_response(Hs, T=self.time, inputs=x)
 
@@ -1086,8 +1185,8 @@ class TabPage2(QWidget):
         control_type = self.control_type
 
         for idx in range(nt-1):
-            target_list = [self.parent.msd.x, self.parent.msd.v,
-                           self.parent.msd.a, 0.0]
+            target_list = [self.msd.x, self.msd.v,
+                           self.msd.a, 0.0]
             error = self.target_value - target_list[control_type]
 
             # 向左滑动平移
@@ -1103,12 +1202,12 @@ class TabPage2(QWidget):
             force = max(min(force, 1e5), -1e5)  # 最大输出载荷 100,000 N
             self.f_series[idx] = force
 
-            self.parent.msd.update(
+            self.msd.update(
                 self.excitation[idx:idx+2], self.f_series[idx])
 
-            self.x_series[idx] = self.parent.msd.x
-            self.v_series[idx] = self.parent.msd.v
-            self.a_series[idx] = self.parent.msd.a
+            self.x_series[idx] = self.msd.x
+            self.v_series[idx] = self.msd.v
+            self.a_series[idx] = self.msd.a
 
         # plot figures
         plot_widget_i.plot(self.time[:-1], self.x_series[:-1], pen=pg.mkPen(
@@ -1124,9 +1223,9 @@ class TabPage2(QWidget):
 
     def get_system_transfer_functions(self):
 
-        m = self.parent.data.mass
-        c = self.parent.data.damping
-        k = self.parent.data.stiffness
+        m = self.data.mass
+        c = self.data.damping
+        k = self.data.stiffness
 
         Gs = ct.tf([c, k], [m, c, k])
 
@@ -1238,22 +1337,22 @@ class TabPage2(QWidget):
 
     def simulation_data_preparation(self):
 
-        if not self.parent.tabpage1.collect_data():
+        if not self.tabpage1.collect_data():
             return False
 
-        self.parent.msd.reset()
+        self.msd.reset()
 
-        self.parent.tabpage1.simulation_data_preparation()
+        self.tabpage1.simulation_data_preparation()
 
-        dt = self.parent.data.dt
+        dt = self.data.dt
         self.dt = dt
-        self.time_stop = self.parent.data.time_stop
-        self.target_value = self.parent.data.target_value
-        self.control_type = self.parent.data.control_type
-        self.signal_type = self.parent.data.signal_type
-        self.frequency = self.parent.data.frequency
-        self.amplitude = self.parent.data.amplitude
-        self.excitation = self.parent.tabpage1.excitation
+        self.time_stop = self.data.time_stop
+        self.target_value = self.data.target_value
+        self.control_type = self.data.control_type
+        self.signal_type = self.data.signal_type
+        self.frequency = self.data.frequency
+        self.amplitude = self.data.amplitude
+        self.excitation = self.tabpage1.excitation
 
         self.time = np.arange(0, self.time_stop, dt)
         nt = len(self.time)

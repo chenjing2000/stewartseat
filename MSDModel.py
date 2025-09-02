@@ -9,8 +9,6 @@ import ctypes
 import numpy as np
 from dataclasses import dataclass
 
-from MSDTabs import *
-
 
 @dataclass
 class DataGroup:
@@ -32,6 +30,11 @@ class DataGroup:
     frequency: float = 2.0
     dt: float = 0.001
     time_stop: float = 5.0
+
+    # external excitation
+    isimporting: bool = False
+    filename: str = None
+    skiprows: int = 3
 
 
 class MSDPlant:
