@@ -4,13 +4,657 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget,
                                QVBoxLayout, QHBoxLayout, QLabel,
                                QGroupBox, QLineEdit, QLabel,
                                QComboBox, QPushButton, QDialog,
-                               QSpacerItem, QSizePolicy)
-from PySide6.QtGui import QDoubleValidator
+                               QCheckBox, QFileDialog, QSpacerItem, QSizePolicy)
+from PySide6.QtGui import (QDoubleValidator, QIntValidator, QFontMetrics)
 
 import numpy as np
 import control as ct
 
 from MSDChart import *
+
+
+class TabPage1(QWidget):
+    status_changed = Signal(str)
+    data_updated = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent=parent)
+        self.parent = parent
+
+        self._setup_ui()
+
+        self.transient_window = None
+        self.bode_window = None
+        self.frequency_window = None
+
+        # 定时器
+        self.timer = QTimer(self)
+        self.timer.setInterval(10)  # 每 10 毫秒触发一次
+        self.timer.timeout.connect(self.update_simulation,
+                                   type=Qt.QueuedConnection)
+
+    def _setup_ui(self):
+
+        tabpage1_layout = QVBoxLayout(self)
+
+        # 基本参数设置
+        self.params_group = QGroupBox("MSD Parameters")
+        self.params_layout = QHBoxLayout(self.params_group)
+
+        default_params = {"质量(kg)": 10, "阻尼(N.s/m)": 40, "刚度": 1000}
+        self.msd_boxes = []
+
+        for idx, (key, value) in enumerate(default_params.items()):
+            if idx < 2:
+                key_label = QLabel(key)
+                key_label.setFixedWidth(50)
+                self.params_layout.addWidget(key_label)
+            else:
+                btn_show_infos = QPushButton(key)
+                btn_show_infos.setFixedWidth(50)
+                self.params_layout.addWidget(btn_show_infos)
+                btn_show_infos.clicked.connect(self.btn_show_infos_clicked)
+
+            ebox = self.create_number_box(str(value), 1)
+
+            self.msd_boxes.append(ebox)
+            self.params_layout.addWidget(ebox)
+
+        tabpage1_layout.addWidget(self.params_group)
+
+        # PID 参数设置
+        self.pidset_group = QGroupBox("PID Parameters")
+        pidset_layout = QVBoxLayout(self.pidset_group)
+        pidset_layout_1 = QHBoxLayout()
+
+        default_pid = {"kp:": 1.0, "ki:": 0.0, "kd:": 0.0}
+        self.pid_boxes = []
+        self.pid_comboboxes = []
+
+        for _, (key, value) in enumerate(default_pid.items()):
+            key_label = QLabel(key)
+            key_label.setFixedWidth(50)
+            pidset_layout_1.addWidget(key_label)
+
+            ebox = self.create_number_box(str(value), 0)
+
+            self.pid_boxes.append(ebox)
+            pidset_layout_1.addWidget(ebox)
+
+        pidset_layout.addLayout(pidset_layout_1)
+
+        pidset_layout_2 = QHBoxLayout()
+
+        key_label = QLabel("对象")
+        key_label.setFixedWidth(50)
+        pidset_layout_2.addWidget(key_label)
+
+        combox = QComboBox()
+        combox.addItems(["位移", "速度", "加速度", "无"])
+        combox.setMinimumWidth(60)
+        combox.setCurrentIndex(3)
+
+        self.pid_comboboxes.append(combox)
+        pidset_layout_2.addWidget(combox, 10)
+
+        key_label = QLabel("目标值")
+        key_label.setFixedWidth(50)
+        pidset_layout_2.addWidget(key_label, 10)
+
+        ebox = self.create_number_box("0.0", 0)
+
+        self.pid_boxes.append(ebox)
+        pidset_layout_2.addWidget(ebox, 10)
+
+        btn_bodeplot = QPushButton("bode")
+        btn_bodeplot.clicked.connect(self.btn_bodeplot_clicked)
+        pidset_layout_2.addWidget(btn_bodeplot, 9)
+
+        btn_frequency_analyses = QPushButton("频谱")
+        btn_frequency_analyses.clicked.connect(
+            self.btn_frequency_analyses_clicked)
+        pidset_layout_2.addWidget(btn_frequency_analyses, 9)
+
+        pidset_layout.addLayout(pidset_layout_2)
+
+        tabpage1_layout.addWidget(self.pidset_group)
+
+        # 仿真设置
+        self.simulation_group = QGroupBox("仿真设置")
+        self.simulation_layout = QVBoxLayout(self.simulation_group)
+        simulation_layout_1 = QHBoxLayout()
+
+        self.sim_comboboxes = []
+        self.sim_boxes = []
+
+        key_label = QLabel("典型信号")
+        key_label.setFixedWidth(50)
+        simulation_layout_1.addWidget(key_label)
+
+        combox = QComboBox()
+        combox.addItems(["脉冲", "阶跃", "正弦"])
+        combox.setMinimumWidth(60)
+
+        self.sim_comboboxes.append(combox)
+        simulation_layout_1.addWidget(combox)
+
+        key_label = QLabel("幅值(m)")
+        key_label.setFixedWidth(50)
+        simulation_layout_1.addWidget(key_label)
+
+        ebox = self.create_number_box("0.1", 1)
+
+        self.sim_boxes.append(ebox)
+        simulation_layout_1.addWidget(ebox)
+
+        key_label = QLabel("频率(Hz)")
+        key_label.setFixedWidth(50)
+        simulation_layout_1.addWidget(key_label)
+
+        ebox = self.create_number_box("2.0", 1)
+
+        self.sim_boxes.append(ebox)
+        simulation_layout_1.addWidget(ebox)
+
+        simulation_layout_2 = QHBoxLayout()
+
+        key_label = QLabel("时长(s)")
+        key_label.setFixedWidth(50)
+        simulation_layout_2.addWidget(key_label)
+
+        ebox = self.create_number_box("5.0", 1)
+
+        self.sim_boxes.append(ebox)
+        simulation_layout_2.addWidget(ebox)
+
+        key_check = QCheckBox("导入")
+        key_check.setFixedWidth(50)
+        simulation_layout_2.addWidget(key_check)
+
+        self.sim_checkboxes = []
+        self.sim_checkboxes.append(key_check)
+
+        btn_import_excitation = QPushButton("选择文件")
+        btn_import_excitation.clicked.connect(
+            self.btn_import_excitation_clicked)
+        simulation_layout_2.addWidget(btn_import_excitation)
+
+        key_label = QLabel("忽略行数")
+        key_label.setFixedWidth(50)
+        simulation_layout_2.addWidget(key_label)
+
+        ebox = QLineEdit("3")
+        ebox.setValidator(QIntValidator(0, 30))
+        ebox.editingFinished.connect(self.float_data_checking)
+
+        ebox.setMaximumWidth(100)
+        ebox.setAlignment(Qt.AlignmentFlag.AlignRight)
+
+        self.sim_boxes.append(ebox)
+        simulation_layout_2.addWidget(ebox)
+
+        simulation_layout_3 = QHBoxLayout()
+
+        btn_simulate = QPushButton("simulate")
+        btn_simulate.clicked.connect(self.btn_simulate_clicked)
+        simulation_layout_3.addWidget(btn_simulate)
+
+        btn_animate = QPushButton("animate")
+        btn_animate.clicked.connect(self.btn_animate_clicked)
+        simulation_layout_3.addWidget(btn_animate)
+
+        self.simulation_layout.addLayout(simulation_layout_1)
+        self.simulation_layout.addLayout(simulation_layout_2)
+        self.simulation_layout.addLayout(simulation_layout_3)
+
+        tabpage1_layout.addWidget(self.simulation_group)
+
+    def create_number_box(self, value: str, validator_type: int):
+        # validator_type > 0: positive double validator; else: double validator
+        #
+
+        lower_bound = 0.0 if validator_type > 0 else -1e8
+        validator = QDoubleValidator(lower_bound, 1e8, 2)
+        validator.setNotation(QDoubleValidator.StandardNotation)
+
+        ebox = QLineEdit(value)
+        ebox.setValidator(validator)
+        ebox.editingFinished.connect(lambda: self.float_data_checking(ebox))
+
+        ebox.setMaximumWidth(100)
+        ebox.setAlignment(Qt.AlignmentFlag.AlignRight)
+
+        return ebox
+
+    def float_data_checking(self, line_edit: QLineEdit):
+        #
+        text = line_edit.text().strip()
+        if not text:  # 空字符串单独处理
+            line_edit.setProperty("valid", False)
+            line_edit.style().polish(line_edit)
+            self.status_changed.emit("Error: Data is empty.")
+            return False
+
+        try:
+            float(text)
+            line_edit.setProperty("valid", True)
+            line_edit.style().polish(line_edit)
+            self.status_changed.emit("Message: Data is valid.")
+            return True
+        except (ValueError, TypeError):
+            line_edit.setProperty("valid", False)
+            line_edit.style().polish(line_edit)
+            self.status_changed.emit("Error: Data is invalid.")
+            return False
+
+    def collect_data(self):
+
+        self.parent.data.mass = float(self.msd_boxes[0].text())
+        self.parent.data.damping = float(self.msd_boxes[1].text())
+        self.parent.data.stiffness = float(self.msd_boxes[2].text())
+
+        self.parent.data.kp = float(self.pid_boxes[0].text())
+        self.parent.data.ki = float(self.pid_boxes[1].text())
+        self.parent.data.kd = float(self.pid_boxes[2].text())
+
+        self.parent.data.control_type = self.pid_comboboxes[0].currentIndex()
+        self.parent.data.target_value = float(self.pid_boxes[3].text())
+
+        self.parent.data.signal_type = self.sim_comboboxes[0].currentIndex()
+        self.parent.data.amplitude = float(self.sim_boxes[0].text())
+        self.parent.data.frequency = float(self.sim_boxes[1].text())
+        self.parent.data.time_stop = float(self.sim_boxes[2].text())
+
+        self.data_updated.emit()
+
+    def get_windows(self):
+
+        windows_list = [self.transient_window, self.frequency_window,
+                        self.bode_window]
+        return windows_list
+
+    def btn_show_infos_clicked(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("基本信息")
+        dialog.setFixedWidth(300)
+        dialog.setMaximumHeight(300)
+
+        layout = QVBoxLayout()
+
+        self.collect_data()  # 更新数据类
+
+        m, c, k = self.parent.msd.m, self.parent.msd.c, self.parent.msd.k
+
+        wn = np.sqrt(k/m)
+        zt = c/2/np.sqrt(m*k)
+        wd = np.sqrt(1 - zt**2) * wn
+
+        label0 = QLabel(
+            f"wn = {wn/(2*np.pi):.2f} Hz, zeta = {zt:.2f}, wd = {wd/(2*np.pi):.2f} Hz.", dialog)
+
+        tr = (np.pi - np.arccos(zt)) / wd
+        tp = np.pi / wd
+        ts = 4 / (zt*wn)
+
+        Mos = np.exp(- zt * np.pi / np.sqrt(1 - zt**2))
+
+        label1 = QLabel(
+            f"tr = {tr:.2f} s, tp = {tp:.2f} s, ts = {ts:.2f} s, Mos = {Mos*100:.1f}%.")
+
+        zs = 1 - 2 * zt**2
+        wp = wn * np.sqrt(zs)    # resonant frequency
+        Mp = 1/(2 * zt * np.sqrt(1 - zt**2))  # resonant peak
+
+        wb = wn * np.sqrt(zs + np.sqrt(zs**2 + 1))  # bandwidth
+
+        wc = wn * np.sqrt(np.sqrt(1 + 4 * zt**4) - 2 *
+                          zt**2)  # crossover frequency
+
+        PM = np.arctan(2 * zt/np.sqrt(- 2 * zt**2 + np.sqrt(1 + 4 * zt**4)))
+
+        label2 = QLabel(
+            f"wp = {wp/(2*np.pi):.2f} Hz, Mp = {Mp:.2f}, ")
+
+        label3 = QLabel(
+            f"wb = {wb/(2*np.pi):.2f} Hz, wc = {wc/(2*np.pi):.2f} Hz, PM = {PM:.2f}.")
+
+        layout.addWidget(label0)
+        layout.addWidget(label1)
+        layout.addWidget(label2)
+        layout.addWidget(label3)
+
+        result = self.get_system_transfer_functions()
+
+        if not result:
+            return
+        else:
+            Gs, Gb = result
+
+        # 传递函数极点
+        poles = ct.poles(Gs)
+
+        poles_str = ", ".join(
+            [f"{p.real:.2f}{'+' if p.imag>=0 else ''}{p.imag:.2f}j" for p in poles])
+        label4 = QLabel(f"open loop poles : [{poles_str}].")
+        label4.setWordWrap(True)
+
+        layout.addWidget(label4)
+
+        poles = ct.poles(Gb)
+
+        poles_str = ", ".join(
+            [f"{p.real:.2f}{'+' if p.imag>=0 else ''}{p.imag:.2f}j" for p in poles])
+        label5 = QLabel(f"closed loop poles : [{poles_str}]")
+        label5.setWordWrap(True)
+
+        layout.addWidget(label5)
+
+        dialog.setLayout(layout)
+        dialog.exec()  # 阻塞式弹出
+
+    def get_system_transfer_functions(self):
+
+        m, c, k = self.parent.msd.m, self.parent.msd.c, self.parent.msd.k
+
+        Gs = ct.tf([c, k], [m, c, k])
+
+        control_type = self.pid_comboboxes[0].currentIndex()
+
+        if control_type < 3:
+
+            kp, ki, kd = self.parent.pid.kp, self.parent.pid.ki, self.parent.pid.kd
+
+            numx = [1, 0]
+            denx = [kd, kp, ki]
+
+            if control_type == 1:
+                denx.extend([0])
+
+            if control_type == 2:
+                denx.extend([0, 0])
+
+            Hx = ct.tf(numx, denx)  # PID 控制器传递函数
+
+            Gf = ct.tf(1, [c, k])  # 力传递函数
+
+            Gb = Hx * Gs / (Hx + Gs * Gf)  # 闭环系统传递函数
+
+            Gb = ct.minreal(Gb, verbose=False)
+
+        else:
+            Gb = Gs
+
+        return Gs, Gb
+
+    def btn_import_excitation_clicked(self):
+
+        file_name, _ = QFileDialog.getOpenFileName(
+            self,
+            "选择文件",
+            "C:\\",  # 初始路径，可以写 "C:/"
+            "文本文件 (*.txt);;CSV 文件 (*.csv)"
+        )
+
+        if file_name:
+            # 限定显示长度（比如 label 宽度）
+            metrics = QFontMetrics(self.parent.status_label.font())
+            file_name_short = metrics.elidedText(
+                file_name, Qt.ElideMiddle, self.parent.status_label.width())
+
+            self.status_changed.emit(file_name_short)
+
+    def btn_bodeplot_clicked(self):
+
+        self.collect_data()
+
+        Gs, Gb = self.get_system_transfer_functions()
+
+        if self.bode_window is None:
+            self.bode_window = BodeWindow()   # 新建
+
+        self.bode_window.show()
+        self.bode_window.raise_()
+        self.bode_window.activateWindow()
+
+        self.bode_window.clear_plots()
+
+        plot_widget_i = self.bode_window.plot_widget_1
+        plot_widget_j = self.bode_window.plot_widget_2
+
+        # 开环频率特性
+        mag, phase, omega = ct.frequency_response(Gs)
+
+        plot_widget_i.plot(omega, 20*np.log10(mag), pen=pg.mkPen(
+            color='b', width=2), name='位移幅值特性')
+        plot_widget_i.plot(omega, 20*np.log10(mag * omega), pen=pg.mkPen(
+            color='r', width=2), name='速度幅值特性')
+        plot_widget_i.plot(omega, 20*np.log10(mag * omega ** 2), pen=pg.mkPen(
+            color='g', width=2), name='加速度幅值特性')
+
+        plot_widget_j.plot(omega, phase, pen=pg.mkPen(
+            color='b', width=2), name='位移相位特性')
+        plot_widget_j.plot(omega, phase + np.pi/2, pen=pg.mkPen(
+            color='r', width=2), name='速度相位特性')
+        plot_widget_j.plot(omega, phase + np.pi, pen=pg.mkPen(
+            color='g', width=2), name='加速度相位特性')
+
+        # 闭环频率特性
+        mag, phase, omega = ct.frequency_response(Gb)
+
+        plot_widget_i.plot(omega, 20*np.log10(mag), pen=pg.mkPen(
+            color='b', width=2, style=Qt.DashLine), name='闭环位移幅值特性')
+        plot_widget_i.plot(omega, 20*np.log10(mag * omega), pen=pg.mkPen(
+            color='r', width=2, style=Qt.DashLine), name='闭环速度幅值特性')
+        plot_widget_i.plot(omega, 20*np.log10(mag * omega ** 2), pen=pg.mkPen(
+            color='g', width=2, style=Qt.DashLine), name='闭环加速度幅值特性')
+
+        plot_widget_j.plot(omega, phase, pen=pg.mkPen(
+            color='b', width=2, style=Qt.DashLine), name='闭环位移相位特性')
+        plot_widget_j.plot(omega, phase + np.pi/2, pen=pg.mkPen(
+            color='r', width=2, style=Qt.DashLine), name='闭环速度相位特性')
+        plot_widget_j.plot(omega, phase + np.pi, pen=pg.mkPen(
+            color='g', width=2, style=Qt.DashLine), name='闭环加速度相位特性')
+
+    def btn_frequency_analyses_clicked(self):
+
+        self.collect_data()
+
+        Gs, Gb = self.get_system_transfer_functions()
+
+        # 绘图
+        if self.frequency_window is None:
+            self.frequency_window = FrequencyWindow()   # 新建
+
+        self.frequency_window.show()
+        self.frequency_window.raise_()
+        self.frequency_window.activateWindow()
+
+        self.frequency_window.clear_plots()
+
+        # 开环\闭环频率特性分析
+        self.frequency_window.plot_frequency_figures(Gs, 'b', "open loop")
+        self.frequency_window.plot_frequency_figures(Gb, 'r', "closed loop")
+
+        self.frequency_window.add_auxiliary_parts()
+
+    def simulation_data_preparation(self):
+
+        self.collect_data()
+        self.parent.msd.reset()
+
+        self.step_now = 0
+        self.time_now = 0.0
+
+        dt = self.parent.data.dt
+        self.dt = dt
+        self.time_stop = self.parent.data.time_stop
+        self.target_value = self.parent.data.target_value
+        self.control_type = self.parent.data.control_type
+        self.signal_type = self.parent.data.signal_type
+        self.frequency = self.parent.data.frequency
+        self.amplitude = self.parent.data.amplitude
+
+        self.time = np.arange(0, self.time_stop, dt)
+        nt = len(self.time)
+
+        self.excitation = self.get_typical_signal()
+
+        if self.sim_checkboxes[0].isChecked():
+            self.status_changed.emit("外部导入文件方法尚未完成。")
+
+        self.x_series = np.zeros(nt, dtype=float)
+        self.v_series = np.zeros(nt, dtype=float)
+        self.a_series = np.zeros(nt, dtype=float)
+        self.f_series = np.zeros(nt, dtype=float)
+
+        self.status_changed.emit("Initialization completes.")
+
+    def get_typical_signal(self):
+
+        dt = self.dt
+        nt = len(self.time)
+
+        signal = np.zeros(nt, dtype=float)
+
+        if self.signal_type == 1:  # step
+            step_start = int(0.1 / dt)
+            signal[step_start:] = self.amplitude
+
+        elif self.signal_type == 2:  # sine
+            omega = 2 * np.pi * self.frequency
+            signal = self.amplitude * np.sin(omega * self.time)
+
+        else:  # impulse
+            impulse_time_period = 0.1
+            # 幅值取小点，否则绘图区装不下
+            amplitude = self.amplitude / impulse_time_period
+
+            step_start = int(0.1 / dt)
+            step_stop = int((0.1 + impulse_time_period) / dt)
+            signal[step_start:step_stop] = amplitude
+
+        return signal
+
+    def simulation_window_preparation(self):
+
+        if self.transient_window is None:
+            self.transient_window = TransientWindow()   # 新建
+
+        self.transient_window.show()
+        self.transient_window.raise_()
+        self.transient_window.activateWindow()
+
+        self.transient_window.plot_curve_11.setData([], [])
+        self.transient_window.plot_curve_12.setData([], [])
+        self.transient_window.plot_curve_2.setData([], [])
+        self.transient_window.plot_curve_3.setData([], [])
+
+        self.transient_window.plot_widget_1.setXRange(0, self.time_stop)
+        self.transient_window.plot_widget_2.setXRange(0, self.time_stop)
+        self.transient_window.plot_widget_3.setXRange(0, self.time_stop)
+
+    def btn_simulate_clicked(self):
+
+        self.status_changed.emit("Simulation starts.")
+
+        # 停止定时器
+        if self.timer.isActive():
+            self.timer.stop()
+
+        self.simulation_data_preparation()
+        self.simulation_window_preparation()
+
+        for idx in range(len(self.time)-1):
+            target_list = [self.parent.msd.x,
+                           self.parent.msd.v,
+                           self.parent.msd.a,
+                           0.0]
+            error = self.target_value - target_list[self.control_type]
+
+            force = self.parent.pid.calculate_force(error)
+
+            self.parent.msd.update(self.excitation[idx:idx+2], force)
+
+            self.x_series[idx] = self.parent.msd.x
+            self.v_series[idx] = self.parent.msd.v
+            self.a_series[idx] = self.parent.msd.a
+            self.f_series[idx] = force
+
+        # 绘制曲线
+        self.transient_window.plot_curve_11.setData(
+            self.time[:-1], self.x_series[:-1])
+        self.transient_window.plot_curve_12.setData(
+            self.time[:-1], self.excitation[:-1])
+        self.transient_window.plot_curve_2.setData(
+            self.time[:-1], self.a_series[:-1])
+        self.transient_window.plot_curve_3.setData(
+            self.time[:-1], self.f_series[:-1])
+
+        self.status_changed.emit("Simulation finishes.")
+
+    def btn_animate_clicked(self):
+        """
+        当点击 'animate' 按钮时调用，用于启动动画仿真。
+        """
+        self.status_changed.emit("Animation starts.")
+
+        self.simulation_data_preparation()
+        self.simulation_window_preparation()
+
+        # 停止并重新启动定时器，开始动画
+        if self.timer.isActive():
+            self.timer.stop()
+        self.timer.start()
+
+    def update_simulation(self):
+        """
+        定时器触发的函数，用于驱动动画和图形更新。
+        """
+        # 检查是否达到仿真时长，如果达到则停止定时器
+        if self.step_now >= len(self.time) - 2:
+            self.timer.stop()
+            self.status_changed.emit("Animation stops.")
+            return
+
+        # 计算PID控制力
+        target_list = [self.parent.msd.x,
+                       self.parent.msd.v,
+                       self.parent.msd.a,
+                       0.0]
+        error = self.target_value - target_list[self.control_type]
+
+        control_force = self.parent.pid.calculate_force(error)
+
+        # 更新物理模型
+        self.parent.msd.update(
+            self.excitation[self.step_now:self.step_now+2], control_force)
+
+        idx = self.step_now
+        self.x_series[idx] = self.parent.msd.x
+        self.v_series[idx] = self.parent.msd.v
+        self.a_series[idx] = self.parent.msd.a
+        self.f_series[idx] = control_force
+
+        if idx % 20 == 0:
+            # 更新Pyqtgraph曲线（使用整个数据历史）
+            self.transient_window.plot_curve_11.setData(
+                self.time[:idx+1], self.x_series[:idx+1])
+            self.transient_window.plot_curve_12.setData(
+                self.time[:idx+1], self.excitation[:idx+1])
+            self.transient_window.plot_curve_2.setData(
+                self.time[:idx+1], self.a_series[:idx+1])
+            self.transient_window.plot_curve_3.setData(
+                self.time[:idx+1], self.f_series[:idx+1])
+
+        # 更新OpenGL绘图
+        self.parent.msdviz.mass_motion = self.parent.msd.x
+        self.parent.msdviz.base_motion = self.excitation[self.step_now + 1]
+
+        self.parent.msdviz.update()
+
+        # 更新时间步
+        self.step_now += 1
+        self.time_now += self.dt
 
 
 class TabPage2(QWidget):
@@ -19,6 +663,18 @@ class TabPage2(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent=parent)
         self.parent = parent
+
+        self.Hs = 1.0  # default transfer function
+
+        self._setup_ui()
+
+        self.transient_window = None
+        self.frequency_window = None
+        self.discrete_window = None
+        self.transient_window_2 = None
+        self.frequency_window_2 = None
+
+    def _setup_ui(self):
 
         tabpage2_layout = QVBoxLayout(self)
 
@@ -64,9 +720,9 @@ class TabPage2(QWidget):
         key_label.setFixedWidth(50)
         self.tf_layout_2.addWidget(key_label)
 
-        value_boxes = self.set_transfer_function_boxes(
+        eboxes = self.set_transfer_function_boxes(
             self.tf_layout_2, 2, True)
-        self.numerator_boxes = value_boxes.copy()
+        self.numerator_boxes = eboxes.copy()
 
         self.tf_layout.addLayout(self.tf_layout_2)
 
@@ -76,9 +732,9 @@ class TabPage2(QWidget):
         key_label.setFixedWidth(50)
         self.tf_layout_3.addWidget(key_label)
 
-        value_boxes = self.set_transfer_function_boxes(
+        eboxes = self.set_transfer_function_boxes(
             self.tf_layout_3, 3, False)
-        self.denominator_boxes = value_boxes.copy()
+        self.denominator_boxes = eboxes.copy()
 
         self.tf_layout.addLayout(self.tf_layout_3)
 
@@ -88,12 +744,6 @@ class TabPage2(QWidget):
         self.btn_time_responses.clicked.connect(
             self.btn_transient_responses_clicked)
         tf_layout_4.addWidget(self.btn_time_responses)
-
-        self.transient_window = None
-        self.frequency_window = None
-        self.discrete_window = None
-        self.transient_window_2 = None
-        self.frequency_window_2 = None
 
         self.btn_frequency_analyses = QPushButton("传递函数频谱分析")
         self.btn_frequency_analyses.clicked.connect(
@@ -124,8 +774,6 @@ class TabPage2(QWidget):
         tabpage2_layout.addWidget(self.tf_group)
         tabpage2_layout.addStretch()
 
-        self.Hs = 1.0  # default transfer function
-
     def get_windows(self):
 
         windows_list = [self.transient_window, self.frequency_window,
@@ -138,14 +786,19 @@ class TabPage2(QWidget):
         dialog = QDialog(self)
         dialog.setWindowTitle("基本信息")
         dialog.setFixedWidth(300)
-        dialog.setMaximumHeight(700)
+        dialog.setMaximumHeight(300)
+
+        self.simulation_data_preparation()
 
         layout = QVBoxLayout()
 
-        if not self.get_transfer_function_from_boxes():
+        result = self.get_transfer_function_from_boxes()
+        if not result:
             return
+        else:
+            Hs = result
 
-        poles = self.Hs.poles()
+        poles = Hs.poles()
 
         poles_str = ", ".join(
             [f"{p.real:.2f}{'+' if p.imag>=0 else ''}{p.imag:.2f}j" for p in poles])
@@ -187,17 +840,17 @@ class TabPage2(QWidget):
             layout.addStretch(1)
 
         boxes = []
-        for id in range(count):
-            value_box = QLineEdit("")
-            value_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        for idx in range(count):
+            ebox = QLineEdit("")
+            ebox.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
             validator = QDoubleValidator(
                 -1e8, 1e8, 2)  # 限定范围，小数点取 2 位
             validator.setNotation(QDoubleValidator.StandardNotation)
-            value_box.setValidator(validator)
+            ebox.setValidator(validator)
 
-            boxes.append(value_box)
-            layout.addWidget(value_box, 2)
+            boxes.append(ebox)
+            layout.addWidget(ebox, 2)
 
         if isnumerator:
             layout.addStretch(1)
@@ -208,15 +861,15 @@ class TabPage2(QWidget):
 
         order = self.comboboxes[0].currentIndex() + 1
 
-        value_boxes = self.set_transfer_function_boxes(
+        eboxes = self.set_transfer_function_boxes(
             self.tf_layout_2, order, True)
 
-        self.numerator_boxes = value_boxes.copy()
+        self.numerator_boxes = eboxes.copy()
 
-        value_boxes = self.set_transfer_function_boxes(
+        eboxes = self.set_transfer_function_boxes(
             self.tf_layout_3, order + 1, False)
 
-        self.denominator_boxes = value_boxes.copy()
+        self.denominator_boxes = eboxes.copy()
 
         self.comboboxes[1].setCurrentIndex(0)
 
@@ -250,46 +903,42 @@ class TabPage2(QWidget):
         num = np.zeros(order, dtype=float)
         den = np.zeros(order + 1, dtype=float)
 
-        for id, box in enumerate(self.numerator_boxes):
+        for idx, box in enumerate(self.numerator_boxes):
             box_str = box.text().strip()
             if box_str == "":
-                num[id] = 0.0
+                num[idx] = 0.0
             else:
-                num[id] = float(box_str)
+                num[idx] = float(box_str)
 
-        for id, box in enumerate(self.denominator_boxes):
+        for idx, box in enumerate(self.denominator_boxes):
             box_str = box.text().strip()
             if box_str == "":
-                den[id] = 0.0
+                den[idx] = 0.0
             else:
-                den[id] = float(box_str)
+                den[idx] = float(box_str)
 
         if np.allclose(num, 0, 0, 1e-6) or np.allclose(den, 0, 0, 1e-6):
             self.status_changed.emit("Numerator or denominator is Null.")
-            return False
+            return None
 
-        self.Hs = ct.minreal(ct.tf(num, den), verbose=False)
+        Hs = ct.minreal(ct.tf(num, den), verbose=False)
 
-        if len(self.Hs.num[0][0]) >= len(self.Hs.den[0][0]):
+        if len(Hs.num[0][0]) >= len(Hs.den[0][0]):
             self.status_changed.emit("Controller is not strictly proper.")
-            return False
+            return None
 
-        return True
+        return Hs
 
     def btn_transient_responses_clicked(self):
 
-        if not self.get_transfer_function_from_boxes():
+        result = self.get_transfer_function_from_boxes()
+        if not result:
             return
+        else:
+            Hs = result
 
         # 时域响应
-        dt = self.parent.dt
-        time_stop = float(self.parent.sim_boxes[2].text())
-
-        time = np.arange(0, time_stop, dt)
-
-        # 1. impulse response
-        t, y = ct.impulse_response(self.Hs, T=time)
-
+        # 0. window preparation
         if self.transient_window is None:
             self.transient_window = TransientWindow()   # 新建
 
@@ -303,13 +952,18 @@ class TabPage2(QWidget):
         plot_widget_j = self.transient_window.plot_widget_2
         plot_widget_k = self.transient_window.plot_widget_3
 
+        # 0. data preparation
+        self.simulation_data_preparation()
+        # 1. impulse response
+        t, y = ct.impulse_response(Hs, T=self.time)
+
         plot_widget_i.plot(t, y, pen=pg.mkPen(
             color='b', width=2), name="脉冲响应")
 
         plot_widget_i.setLabel("left", "displacement (m)")
 
         # 2. step response
-        t, y = ct.step_response(self.Hs, T=time)
+        t, y = ct.step_response(Hs, T=self.time)
 
         plot_widget_j.plot(t, y, pen=pg.mkPen(
             color='b', width=2), name="阶跃响应")
@@ -317,10 +971,9 @@ class TabPage2(QWidget):
         plot_widget_j.setLabel("left", "displacement (m)")
 
         # 3. sine response
-        amplitude = float(self.parent.sim_boxes[0].text())
-        omega = 2*np.pi*float(self.parent.sim_boxes[1].text())
-        x = amplitude * np.sin(omega*time)
-        t, y = ct.forced_response(self.Hs, T=time, inputs=x)
+        omega = 2 * np.pi * float(self.parent.tabpage1.sim_boxes[1].text())
+        x = np.sin(omega*self.time)
+        t, y = ct.forced_response(Hs, T=self.time, inputs=x)
 
         plot_widget_k.plot(t, y, pen=pg.mkPen(
             color='b', width=2), name="正弦响应")
@@ -329,9 +982,14 @@ class TabPage2(QWidget):
 
     def btn_frequency_analyses_clicked(self):
 
-        if not self.get_transfer_function_from_boxes():
+        result = self.get_transfer_function_from_boxes()
+        if not result:
             return
+        else:
+            Hs = result
 
+        # 频域响应
+        # 0. window preparation
         if self.frequency_window is None:
             self.frequency_window = FrequencyWindow()   # 新建
 
@@ -341,16 +999,22 @@ class TabPage2(QWidget):
 
         self.frequency_window.clear_plots()
 
+        # 1. frequency response
         self.frequency_window.plot_frequency_figures(
-            self.Hs, 'b', "transfer function")
+            Hs, 'b', "transfer function")
 
         self.frequency_window.add_auxiliary_parts()
 
     def btn_discrete_control_clicked(self):
 
-        if not self.get_transfer_function_from_boxes():
+        result = self.get_transfer_function_from_boxes()
+        if not result:
             return
+        else:
+            Hs = result
 
+        # 离散时域响应
+        # 0. window preparation
         if self.discrete_window is None or not self.discrete_window.isVisible():
             self.discrete_window = TransientWindow()   # 新建
 
@@ -366,8 +1030,12 @@ class TabPage2(QWidget):
 
         self.status_changed.emit("Simulation starts.")
 
-        dt = self.parent.dt
-        Gz = ct.c2d(self.Hs, dt, 'tustin')
+        # 0. data preparation
+        self.simulation_data_preparation()
+
+        # 1. z 变换
+        dt = self.dt
+        Gz = ct.c2d(Hs, dt, 'tustin')
 
         num = Gz.num[0][0]
         den = Gz.den[0][0]
@@ -382,7 +1050,7 @@ class TabPage2(QWidget):
             self.status_changed.emit("G(z) is not strictly proper.")
             return
 
-        self.system_params_initialization()
+        self.simulation_data_preparation()
 
         nt = len(self.time)
 
@@ -394,9 +1062,9 @@ class TabPage2(QWidget):
         self.a_series = np.zeros(nt, dtype=float)
         self.f_series = np.zeros(nt, dtype=float)
 
-        control_type = self.parent.ctrl_comboboxes[0].currentIndex()
+        control_type = self.control_type
 
-        for id in range(nt-1):
+        for idx in range(nt-1):
             target_list = [self.parent.msd.x, self.parent.msd.v,
                            self.parent.msd.a, 0.0]
             error = self.target_value - target_list[control_type]
@@ -406,19 +1074,20 @@ class TabPage2(QWidget):
             error_history[-1] = error  # 最新元素总在最右边
 
             force_history[:-1] = force_history[1:]
-            force_history[-1] = self.f_series[id-1]  # 最新元素总在最右边
+            force_history[-1] = self.f_series[idx-1]  # 最新元素总在最右边
 
             force = np.sum(np.flip(den) * error_history) - \
                 np.sum(np.flip(num[1:]) * force_history)
 
             force = max(min(force, 1e5), -1e5)  # 最大输出载荷 100,000 N
-            self.f_series[id] = force
+            self.f_series[idx] = force
 
-            self.parent.msd.update(self.excitation[id:id+2], self.f_series[id])
+            self.parent.msd.update(
+                self.excitation[idx:idx+2], self.f_series[idx])
 
-            self.x_series[id] = self.parent.msd.x
-            self.v_series[id] = self.parent.msd.v
-            self.a_series[id] = self.parent.msd.a
+            self.x_series[idx] = self.parent.msd.x
+            self.v_series[idx] = self.parent.msd.v
+            self.a_series[idx] = self.parent.msd.a
 
         # plot figures
         plot_widget_i.plot(self.time[:-1], self.x_series[:-1], pen=pg.mkPen(
@@ -434,30 +1103,27 @@ class TabPage2(QWidget):
 
     def get_system_transfer_functions(self):
 
-        m = float(self.parent.msd_params_boxes[0].text())
-        c = float(self.parent.msd_params_boxes[1].text())
-        k = float(self.parent.msd_params_boxes[2].text())
+        m = self.parent.data.mass
+        c = self.parent.data.damping
+        k = self.parent.data.stiffness
 
         Gs = ct.tf([c, k], [m, c, k])
 
-        control_type = self.parent.ctrl_comboboxes[0].currentIndex()
+        control_type = self.control_type
 
         if control_type < 3:
-            if not self.get_transfer_function_from_boxes():
-                return Gs, Gs
-
-            Hx = self.Hs
-
-            numx = Hx.num[0][0]
-            denx = Hx.den[0][0]
+            result = self.get_transfer_function_from_boxes()
+            if not result:
+                return
+            else:
+                Hs = result
 
             if control_type == 1:
-                denx.extend([0])
-
-            if control_type == 2:
-                denx.extend([0, 0])
-
-            Hx = ct.tf(numx, denx)
+                Hx = Hs * ct.tf(1, [1, 0])
+            elif control_type == 2:
+                Hx = Hs * ct.tf(1, [1, 0, 0])
+            else:
+                Hx = Hs
 
             Gf = ct.tf(1, [c, k])  # 力传递函数
 
@@ -472,8 +1138,9 @@ class TabPage2(QWidget):
 
     def btn_model_transient_response_clicked(self):
 
-        self.system_params_initialization()
+        self.simulation_data_preparation()
 
+        # 0. window preparation
         if self.transient_window_2 is None:
             self.transient_window_2 = TransientWindow()   # 新建
 
@@ -487,9 +1154,7 @@ class TabPage2(QWidget):
         plot_widget_j = self.transient_window_2.plot_widget_2
         plot_widget_k = self.transient_window_2.plot_widget_3
 
-        dt = self.parent.dt
-        time_stop = float(self.parent.sim_boxes[2].text())
-        time = np.arange(0, time_stop, dt)
+        time = self.time
 
         Gs, Gb = self.get_system_transfer_functions()
 
@@ -514,9 +1179,8 @@ class TabPage2(QWidget):
         plot_widget_j.setLabel("left", "displacement (m)")
 
         # 3. sine response
-        amplitude = float(self.parent.sim_boxes[0].text())
-        omega = 2*np.pi*float(self.parent.sim_boxes[1].text())
-        x = amplitude * np.sin(omega*time)
+        omega = 2 * np.pi * self.frequency
+        x = self.amplitude * np.sin(omega*time)
 
         t, y = ct.forced_response(Gs, T=time, inputs=x)
         plot_widget_k.plot(t, y, pen=pg.mkPen(
@@ -530,7 +1194,7 @@ class TabPage2(QWidget):
 
     def btn_model_frequency_analyses_clicked(self):
 
-        self.system_params_initialization()
+        self.simulation_data_preparation()
 
         if self.frequency_window_2 is None:
             self.frequency_window_2 = FrequencyWindow()   # 新建
@@ -549,49 +1213,25 @@ class TabPage2(QWidget):
 
         self.frequency_window_2.add_auxiliary_parts()
 
-    def system_params_initialization(self):
+    def simulation_data_preparation(self):
 
-        self.parent.msd.m = float(self.parent.msd_params_boxes[0].text())
-        self.parent.msd.c = float(self.parent.msd_params_boxes[1].text())
-        self.parent.msd.k = float(self.parent.msd_params_boxes[2].text())
-
+        self.parent.tabpage1.collect_data()
         self.parent.msd.reset()
 
-        self.time_stop = float(self.parent.sim_boxes[2].text())
+        self.parent.tabpage1.simulation_data_preparation()
 
-        dt = self.parent.dt
+        dt = self.parent.data.dt
+        self.dt = dt
+        self.time_stop = self.parent.data.time_stop
+        self.target_value = self.parent.data.target_value
+        self.control_type = self.parent.data.control_type
+        self.signal_type = self.parent.data.signal_type
+        self.frequency = self.parent.data.frequency
+        self.amplitude = self.parent.data.amplitude
+        self.excitation = self.parent.tabpage1.excitation
+
         self.time = np.arange(0, self.time_stop, dt)
         nt = len(self.time)
-
-        # 获取外部激励信号类型
-        signal_type = self.parent.sim_comboboxes[0].currentIndex()
-
-        signal = np.zeros(nt, dtype=float)
-        amplitude = float(self.parent.sim_boxes[0].text())
-
-        if signal_type == 1:  # step
-            step_start = int(0.1 / dt)
-            signal[step_start:] = amplitude
-
-        elif signal_type == 2:  # sine
-            omega = 2 * np.pi * float(self.parent.sim_boxes[1].text())
-            signal = amplitude * np.sin(omega * self.time)
-
-        else:  # impulse
-            impulse_time_period = 0.1
-            # 幅值取小点，否则绘图区装不下
-            amplitude = amplitude / impulse_time_period
-
-            step_start = int(0.1 / dt)
-            step_stop = int((0.1 + impulse_time_period) / dt)
-            signal[step_start:step_stop] = amplitude
-
-        if self.parent.sim_checkboxes[0].isChecked():
-            self.status_changed.emit("外部导入文件方法尚未完成。")
-
-        self.excitation = signal
-
-        self.target_value = float(self.parent.ctrl_boxes[3].text())
 
         self.x_series = np.zeros(nt, dtype=float)
         self.v_series = np.zeros(nt, dtype=float)

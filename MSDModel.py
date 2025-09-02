@@ -7,6 +7,31 @@ from OpenGL.GL import *
 import ctypes
 
 import numpy as np
+from dataclasses import dataclass
+
+from MSDTabs import *
+
+
+@dataclass
+class DataGroup:
+    # msd params
+    mass: float = 10.0
+    damping: float = 40.0
+    stiffness: float = 1000.0
+
+    # pid params
+    kp: float = 10.0
+    ki: float = 10.0
+    kd: float = 0.0
+    control_type: int = 3
+    target_value: float = 0.0
+
+    # simulation params
+    signal_type: int = 0
+    amplitude: float = 0.1
+    frequency: float = 2.0
+    dt: float = 0.001
+    time_stop: float = 5.0
 
 
 class MSDPlant:
@@ -66,6 +91,13 @@ class MSDPlant:
         force = uk - self.k*(self.x - xe) - self.c*(self.v - ve)
         self.a = force / self.m
 
+    def update_parameters(self, data: DataGroup):
+
+        self.m = data.mass
+        self.c = data.damping
+        self.k = data.stiffness
+        self.dt = data.dt
+
 
 class PIDController:
     def __init__(self, kp: float, ki: float, kd: float, dt: float = 0.001):
@@ -91,6 +123,13 @@ class PIDController:
         # 重置积分微分参数
         self.integral = 0.0
         self.error_prev = 0.0
+
+    def update_parameters(self, data: DataGroup):
+
+        self.kp = data.kp
+        self.ki = data.ki
+        self.kd = data.kd
+        self.dt = data.dt
 
 
 # 以下是质量-阻尼-弹簧系统中各零部件的图形绘制方法
@@ -344,7 +383,7 @@ class PartDatums():
         for kd in range(2):
             x_datum = -self.width / 2
             y_datum = self.positions[kd]
-            for id in range(self.section_num):
+            for _ in range(self.section_num):
                 x_datum += x_step
                 vertices.extend([x_datum, y_datum])
 
@@ -404,7 +443,7 @@ class PartSpring():
         x_direction = 1
         y_spring = lower_location + spring_shank
 
-        for id in range(self.spring_coils - 1):
+        for _ in range(self.spring_coils - 1):
             x_spring = self.spring_center + x_direction * self.spring_width/2
             x_direction = -x_direction
             y_spring += coil_height
@@ -548,8 +587,8 @@ class PartActuator():
         # mode : GL_LINE_LOOP (30 vertices)
 
         circle_section_num = 30
-        for id in range(circle_section_num):
-            alpha = id/circle_section_num * 2 * np.pi
+        for idx in range(circle_section_num):
+            alpha = idx/circle_section_num * 2 * np.pi
             x_actuator = center_x + rho * np.cos(alpha)
             y_actuator = center_y + rho * np.sin(alpha)
             vertices.extend([x_actuator, y_actuator])
