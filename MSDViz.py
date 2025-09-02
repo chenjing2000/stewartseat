@@ -1,13 +1,10 @@
 # opengl_widget.py
 
-from PySide6.QtCore import QTimer, Qt
+
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget,
-                               QVBoxLayout, QHBoxLayout, QLabel,
-                               QGroupBox, QLineEdit, QLabel,
-                               QComboBox, QPushButton, QDialog,
-                               QCheckBox, QFileDialog, QTabWidget)
-from PySide6.QtGui import (QPalette, QColor, QDoubleValidator,
-                           QIntValidator, QFontMetrics, QIcon)
+                               QVBoxLayout,  QLabel, QLabel,
+                               QTabWidget)
+from PySide6.QtGui import (QPalette, QColor,  QIcon)
 from OpenGL.GL import *
 
 
@@ -87,34 +84,6 @@ class MainWindow(QMainWindow):
                         self.frequency_window]
         return windows_list
 
-    def get_system_params(self):
-        #
-        try:
-            self.msd.m = float(self.msd_params_boxes[0].text())
-            self.msd.c = float(self.msd_params_boxes[1].text())
-            self.msd.k = float(self.msd_params_boxes[2].text())
-        except ValueError:
-            self.update_status_infos("Error: m, c and k must be numbers.")
-            return False
-        return True
-
-    def get_pid_params(self):
-        #
-        try:
-            self.pid.kp = float(self.ctrl_boxes[0].text())
-            self.pid.ki = float(self.ctrl_boxes[1].text())
-            self.pid.kd = float(self.ctrl_boxes[2].text())
-        except ValueError:
-            self.update_status_infos("Error: PID params must not be empty.")
-            return False
-
-        try:
-            self.target_value = float(self.ctrl_boxes[3].text())
-        except ValueError:
-            self.ctrl_boxes[3].setText("0.0")
-
-        return True
-
     def closeEvent(self, event):
         # 主窗口关闭前，先关闭子窗口
 
@@ -159,8 +128,8 @@ class MainWindow(QMainWindow):
                 border: 1px solid #ccc;
                 border-radius: 3px;
             }
-            QLineEdit[valid=False]{
-                border: 2px solid red;
+            QLineEdit[valid="false"]{
+                border: 1px solid red;
                 background-color: #ffebeb;
             }
 

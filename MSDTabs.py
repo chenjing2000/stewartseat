@@ -185,7 +185,8 @@ class TabPage1(QWidget):
 
         ebox = QLineEdit("3")
         ebox.setValidator(QIntValidator(0, 30))
-        ebox.editingFinished.connect(self.float_data_checking)
+        ebox.textEdited.connect(
+            lambda: self.data_checking(ebox, False))
 
         ebox.setMaximumWidth(100)
         ebox.setAlignment(Qt.AlignmentFlag.AlignRight)
@@ -219,53 +220,63 @@ class TabPage1(QWidget):
 
         ebox = QLineEdit(value)
         ebox.setValidator(validator)
-        ebox.editingFinished.connect(lambda: self.float_data_checking(ebox))
+        ebox.textEdited.connect(lambda: self.data_checking(ebox))
 
         ebox.setMaximumWidth(100)
         ebox.setAlignment(Qt.AlignmentFlag.AlignRight)
 
         return ebox
 
-    def float_data_checking(self, line_edit: QLineEdit):
+    def data_checking(self, line_edit: QLineEdit, is_float: bool = True):
         #
         text = line_edit.text().strip()
         if not text:  # 空字符串单独处理
-            line_edit.setProperty("valid", False)
+            line_edit.setProperty("valid", "false")
             line_edit.style().polish(line_edit)
             self.status_changed.emit("Error: Data is empty.")
             return False
 
         try:
-            float(text)
-            line_edit.setProperty("valid", True)
+            _ = float(text) if is_float else int(text)
+            line_edit.setProperty("valid", "true")
             line_edit.style().polish(line_edit)
             self.status_changed.emit("Message: Data is valid.")
             return True
         except (ValueError, TypeError):
-            line_edit.setProperty("valid", False)
+            line_edit.setProperty("valid", "false")
             line_edit.style().polish(line_edit)
             self.status_changed.emit("Error: Data is invalid.")
             return False
 
     def collect_data(self):
 
-        self.parent.data.mass = float(self.msd_boxes[0].text())
-        self.parent.data.damping = float(self.msd_boxes[1].text())
-        self.parent.data.stiffness = float(self.msd_boxes[2].text())
+        try:
+            self.parent.data.mass = float(self.msd_boxes[0].text())
+            self.parent.data.damping = float(self.msd_boxes[1].text())
+            self.parent.data.stiffness = float(self.msd_boxes[2].text())
 
-        self.parent.data.kp = float(self.pid_boxes[0].text())
-        self.parent.data.ki = float(self.pid_boxes[1].text())
-        self.parent.data.kd = float(self.pid_boxes[2].text())
+            self.parent.data.kp = float(self.pid_boxes[0].text())
+            self.parent.data.ki = float(self.pid_boxes[1].text())
+            self.parent.data.kd = float(self.pid_boxes[2].text())
 
-        self.parent.data.control_type = self.pid_comboboxes[0].currentIndex()
-        self.parent.data.target_value = float(self.pid_boxes[3].text())
+            self.parent.data.control_type = \
+                self.pid_comboboxes[0].currentIndex()
+            self.parent.data.target_value = \
+                float(self.pid_boxes[3].text())
 
-        self.parent.data.signal_type = self.sim_comboboxes[0].currentIndex()
-        self.parent.data.amplitude = float(self.sim_boxes[0].text())
-        self.parent.data.frequency = float(self.sim_boxes[1].text())
-        self.parent.data.time_stop = float(self.sim_boxes[2].text())
+            self.parent.data.signal_type = \
+                self.sim_comboboxes[0].currentIndex()
+            self.parent.data.amplitude = float(self.sim_boxes[0].text())
+            self.parent.data.frequency = float(self.sim_boxes[1].text())
+            self.parent.data.time_stop = float(self.sim_boxes[2].text())
 
-        self.data_updated.emit()
+            self.data_updated.emit()
+
+        except (ValueError) as e:
+            self.status_changed.emit(f"Error: Some boxes are empty.")
+            return False
+
+        return True
 
     def get_windows(self):
 
@@ -274,14 +285,16 @@ class TabPage1(QWidget):
         return windows_list
 
     def btn_show_infos_clicked(self):
+
+        if not self.collect_data():  # 更新数据类
+            return
+
         dialog = QDialog(self)
         dialog.setWindowTitle("基本信息")
         dialog.setFixedWidth(300)
         dialog.setMaximumHeight(300)
 
         layout = QVBoxLayout()
-
-        self.collect_data()  # 更新数据类
 
         m, c, k = self.parent.msd.m, self.parent.msd.c, self.parent.msd.k
 
@@ -354,31 +367,30 @@ class TabPage1(QWidget):
 
     def get_system_transfer_functions(self):
 
-        m, c, k = self.parent.msd.m, self.parent.msd.c, self.parent.msd.k
+        m = self.parent.msd.m
+        c = self.parent.msd.c
+        k = self.parent.msd.k
 
         Gs = ct.tf([c, k], [m, c, k])
 
-        control_type = self.pid_comboboxes[0].currentIndex()
+        control_type = self.parent.data.control_type
 
         if control_type < 3:
+            kp = self.parent.pid.kp
+            ki = self.parent.pid.ki
+            kd = self.parent.pid.kd
 
-            kp, ki, kd = self.parent.pid.kp, self.parent.pid.ki, self.parent.pid.kd
-
-            numx = [1, 0]
-            denx = [kd, kp, ki]
+            Hs = ct.tf([1, 0], [kd, kp, ki])
 
             if control_type == 1:
-                denx.extend([0])
-
-            if control_type == 2:
-                denx.extend([0, 0])
-
-            Hx = ct.tf(numx, denx)  # PID 控制器传递函数
+                Hx = Hs * ct.tf([1, 0], 1)
+            elif control_type == 2:
+                Hx = Hs * ct.tf([1, 0, 0], 1)
+            else:
+                Hx = Hs
 
             Gf = ct.tf(1, [c, k])  # 力传递函数
-
             Gb = Hx * Gs / (Hx + Gs * Gf)  # 闭环系统传递函数
-
             Gb = ct.minreal(Gb, verbose=False)
 
         else:
@@ -405,7 +417,8 @@ class TabPage1(QWidget):
 
     def btn_bodeplot_clicked(self):
 
-        self.collect_data()
+        if not self.collect_data():
+            return
 
         Gs, Gb = self.get_system_transfer_functions()
 
@@ -457,7 +470,8 @@ class TabPage1(QWidget):
 
     def btn_frequency_analyses_clicked(self):
 
-        self.collect_data()
+        if not self.collect_data():
+            return
 
         Gs, Gb = self.get_system_transfer_functions()
 
@@ -479,7 +493,9 @@ class TabPage1(QWidget):
 
     def simulation_data_preparation(self):
 
-        self.collect_data()
+        if not self.collect_data():
+            return False
+
         self.parent.msd.reset()
 
         self.step_now = 0
@@ -508,6 +524,8 @@ class TabPage1(QWidget):
         self.f_series = np.zeros(nt, dtype=float)
 
         self.status_changed.emit("Initialization completes.")
+
+        return True
 
     def get_typical_signal(self):
 
@@ -555,14 +573,15 @@ class TabPage1(QWidget):
 
     def btn_simulate_clicked(self):
 
+        if not self.simulation_data_preparation():
+            return
+
         self.status_changed.emit("Simulation starts.")
 
-        # 停止定时器
+        self.simulation_window_preparation()
+
         if self.timer.isActive():
             self.timer.stop()
-
-        self.simulation_data_preparation()
-        self.simulation_window_preparation()
 
         for idx in range(len(self.time)-1):
             target_list = [self.parent.msd.x,
@@ -593,12 +612,13 @@ class TabPage1(QWidget):
         self.status_changed.emit("Simulation finishes.")
 
     def btn_animate_clicked(self):
-        """
-        当点击 'animate' 按钮时调用，用于启动动画仿真。
-        """
+        #
+
+        if not self.simulation_data_preparation():
+            return
+
         self.status_changed.emit("Animation starts.")
 
-        self.simulation_data_preparation()
         self.simulation_window_preparation()
 
         # 停止并重新启动定时器，开始动画
@@ -783,12 +803,13 @@ class TabPage2(QWidget):
 
     def btn_show_infos_clicked(self):
 
+        if not self.simulation_data_preparation():
+            return
+
         dialog = QDialog(self)
         dialog.setWindowTitle("基本信息")
         dialog.setFixedWidth(300)
         dialog.setMaximumHeight(300)
-
-        self.simulation_data_preparation()
 
         layout = QVBoxLayout()
 
@@ -931,6 +952,10 @@ class TabPage2(QWidget):
 
     def btn_transient_responses_clicked(self):
 
+        # 0. data preparation
+        if not self.simulation_data_preparation():
+            return
+
         result = self.get_transfer_function_from_boxes()
         if not result:
             return
@@ -952,8 +977,6 @@ class TabPage2(QWidget):
         plot_widget_j = self.transient_window.plot_widget_2
         plot_widget_k = self.transient_window.plot_widget_3
 
-        # 0. data preparation
-        self.simulation_data_preparation()
         # 1. impulse response
         t, y = ct.impulse_response(Hs, T=self.time)
 
@@ -1013,6 +1036,10 @@ class TabPage2(QWidget):
         else:
             Hs = result
 
+        # 0. data preparation
+        if not self.simulation_data_preparation():
+            return
+
         # 离散时域响应
         # 0. window preparation
         if self.discrete_window is None or not self.discrete_window.isVisible():
@@ -1030,9 +1057,6 @@ class TabPage2(QWidget):
 
         self.status_changed.emit("Simulation starts.")
 
-        # 0. data preparation
-        self.simulation_data_preparation()
-
         # 1. z 变换
         dt = self.dt
         Gz = ct.c2d(Hs, dt, 'tustin')
@@ -1049,8 +1073,6 @@ class TabPage2(QWidget):
         if len(num) > len(den):
             self.status_changed.emit("G(z) is not strictly proper.")
             return
-
-        self.simulation_data_preparation()
 
         nt = len(self.time)
 
@@ -1119,9 +1141,9 @@ class TabPage2(QWidget):
                 Hs = result
 
             if control_type == 1:
-                Hx = Hs * ct.tf(1, [1, 0])
+                Hx = Hs * ct.tf([1, 0], 1)
             elif control_type == 2:
-                Hx = Hs * ct.tf(1, [1, 0, 0])
+                Hx = Hs * ct.tf([1, 0, 0], 1)
             else:
                 Hx = Hs
 
@@ -1138,7 +1160,8 @@ class TabPage2(QWidget):
 
     def btn_model_transient_response_clicked(self):
 
-        self.simulation_data_preparation()
+        if not self.simulation_data_preparation():
+            return
 
         # 0. window preparation
         if self.transient_window_2 is None:
@@ -1194,7 +1217,8 @@ class TabPage2(QWidget):
 
     def btn_model_frequency_analyses_clicked(self):
 
-        self.simulation_data_preparation()
+        if not self.simulation_data_preparation():
+            return
 
         if self.frequency_window_2 is None:
             self.frequency_window_2 = FrequencyWindow()   # 新建
@@ -1215,7 +1239,9 @@ class TabPage2(QWidget):
 
     def simulation_data_preparation(self):
 
-        self.parent.tabpage1.collect_data()
+        if not self.parent.tabpage1.collect_data():
+            return False
+
         self.parent.msd.reset()
 
         self.parent.tabpage1.simulation_data_preparation()
@@ -1239,3 +1265,5 @@ class TabPage2(QWidget):
         self.f_series = np.zeros(nt, dtype=float)
 
         self.status_changed.emit("System initialization completes.")
+
+        return True
