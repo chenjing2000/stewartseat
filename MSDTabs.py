@@ -30,8 +30,7 @@ class TabPage1(QWidget):
         # 定时器
         self.timer = QTimer(self)
         self.timer.setInterval(10)  # 每 10 毫秒触发一次
-        self.timer.timeout.connect(self.update_simulation,
-                                   type=Qt.QueuedConnection)
+        self.timer.timeout.connect(self.update_simulation)
 
     def _setup_ui(self):
 
@@ -220,7 +219,7 @@ class TabPage1(QWidget):
 
         ebox = QLineEdit(value)
         ebox.setValidator(validator)
-        ebox.textEdited.connect(lambda: self.data_checking(ebox))
+        ebox.textChanged.connect(lambda: self.data_checking(ebox))
 
         ebox.setMaximumWidth(100)
         ebox.setAlignment(Qt.AlignmentFlag.AlignRight)

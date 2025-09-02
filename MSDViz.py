@@ -2,10 +2,8 @@
 
 
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget,
-                               QVBoxLayout,  QLabel, QLabel,
-                               QTabWidget)
-from PySide6.QtGui import (QPalette, QColor,  QIcon)
-from OpenGL.GL import *
+                               QVBoxLayout, QTabWidget)
+from PySide6.QtGui import QIcon
 
 
 from MSDModel import *
@@ -24,27 +22,13 @@ class MainWindow(QMainWindow):
         self._setup_ui()
 
         self.data = DataGroup()
-        # Main components
         self.msd = MSDPlant(
             self.data.mass, self.data.damping, self.data.stiffness)
         self.pid = PIDController(self.data.kp, self.data.ki, self.data.kd)
-        self.excitation = []
-        self.x_series = []
-        self.v_series = []
-        self.a_series = []
-        self.f_series = []
-
-        self.time_stop = 5  # Simulation time period
-        self.dt = 0.001
-        self.msd.dt = self.dt
-        self.pid.dt = self.dt
-
-        self.time = []
-
-        self.step_now = 0
-        self.time_now = 0.0
 
         self.tabpage1.status_changed.connect(self.update_status_infos)
+        self.tabpage2.status_changed.connect(self.update_status_infos)
+
         self.tabpage1.data_updated.connect(
             lambda: self.msd.update_parameters(self.data))
         self.tabpage1.data_updated.connect(
@@ -68,40 +52,30 @@ class MainWindow(QMainWindow):
 
         main_layout.addWidget(self.tabpages)
 
-        self.status_label = QLabel("Ready.")
-        self.tabpage2.status_changed.connect(self.update_status_infos)
-        main_layout.addWidget(self.status_label)
-
         self._apply_styles()
+        self.statusBar().setFixedHeight(20)
 
     def update_status_infos(self, message):
-        self.status_label.setText(message)
-
-    def get_windows(self):
-
-        windows_list = [self.transient_window,
-                        self.bode_window,
-                        self.frequency_window]
-        return windows_list
+        self.statusBar().showMessage(message, 3000)
 
     def closeEvent(self, event):
         # 主窗口关闭前，先关闭子窗口
 
-        for window in self.tabpage2.get_windows():
+        for window in self.tabpage1.get_windows():
             if window is not None:
                 window.close()
 
-        for window in self.tabpage1.get_windows():
+        for window in self.tabpage2.get_windows():
             if window is not None:
                 window.close()
 
         super().closeEvent(event)
 
     def _apply_styles(self):
-        palette = self.palette()
-        palette.setColor(QPalette.ColorRole.Window, QColor(240, 240, 240))
-        self.setPalette(palette)
-        self.styleSheet = """
+        self.setStyleSheet("""
+            MainWindow {
+                background-color: #f0f0f0;
+            }
             QGroupBox {
                 font-weight: bold;
                 border: 1px solid gray;
@@ -185,8 +159,7 @@ class MainWindow(QMainWindow):
                 background: transparent;
                 color: #444;
             }
-        """
-        self.setStyleSheet(self.styleSheet)
+                           """)
 
 
 if __name__ == "__main__":
