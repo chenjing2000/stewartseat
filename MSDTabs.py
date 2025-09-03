@@ -823,7 +823,7 @@ class TabPage2(QWidget):
 
         tabpage2_layout = QVBoxLayout(self)
 
-        # 基本参数设置
+        # 传递函数控制
         self.tf_group = QGroupBox("Transfer Function")
         self.tf_layout = QVBoxLayout(self.tf_group)
         tf_layout_1 = QHBoxLayout()
@@ -917,7 +917,46 @@ class TabPage2(QWidget):
         self.tf_layout.addLayout(tf_layout_5)
 
         tabpage2_layout.addWidget(self.tf_group)
-        tabpage2_layout.addStretch()
+
+        # LQR control
+        self.lqr_group = QGroupBox("LQR Control (Bryson's Rule)")
+        self.lqr_layout = QVBoxLayout(self.lqr_group)
+
+        lqr_layout_1 = QHBoxLayout()
+        self.lqr_boxes = []
+
+        key_label = QLabel("Q")
+        key_label.setFixedWidth(50)
+        key_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lqr_layout_1.addWidget(key_label)
+
+        ebox = self.tabpage1.create_number_box("0.2", 1)
+        self.lqr_boxes.append(ebox)
+        lqr_layout_1.addWidget(ebox)
+
+        ebox = self.tabpage1.create_number_box("5.0", 1)
+        self.lqr_boxes.append(ebox)
+        lqr_layout_1.addWidget(ebox)
+
+        key_label = QLabel("R")
+        key_label.setFixedWidth(50)
+        key_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lqr_layout_1.addWidget(key_label)
+
+        ebox = self.tabpage1.create_number_box("1000", 1)
+        self.lqr_boxes.append(ebox)
+        lqr_layout_1.addWidget(ebox)
+
+        lqr_layout_2 = QHBoxLayout()
+
+        btn_lqr_transient_response = QPushButton("transcient response")
+        btn_lqr_transient_response.clicked.connect(
+            self.btn_lqr_transient_clicked)
+        lqr_layout_2.addWidget(btn_lqr_transient_response)
+
+        self.lqr_layout.addLayout(lqr_layout_1)
+        self.lqr_layout.addLayout(lqr_layout_2)
+        tabpage2_layout.addWidget(self.lqr_group)
 
     def get_windows(self):
 
@@ -1401,3 +1440,6 @@ class TabPage2(QWidget):
         self.status_changed.emit("System initialization completes.")
 
         return True
+
+    def btn_lqr_transient_clicked(self):
+        pass

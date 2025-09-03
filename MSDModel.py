@@ -8,6 +8,7 @@ import ctypes
 
 import numpy as np
 from dataclasses import dataclass
+import control as ct
 
 
 @dataclass
@@ -135,6 +136,58 @@ class PIDController:
         self.ki = data.ki
         self.kd = data.kd
         self.dt = data.dt
+
+
+class LQRController:
+    def __init__(self, data: DataGroup, Q, R, dt: float = 0.001):
+        self.data = data
+
+        self.m = self.data.mass
+        self.c = self.data.damping
+        self.k = self.data.stiffness
+        self.dt = dt
+
+        self.A, self.B, self.B11 = self.state_matrices()
+        self.X = np.zeros(2, float)
+
+        self.Q = Q
+        self.R = R
+
+        self.K, S, E = ct.lqr(self.A, self.B, self.Q, self.R)
+
+    def state_matrices(self):
+        # X = [x-z, dx]
+        # DX = A*X + B11*w + B*u, where w = dz
+        #
+
+        m = self.m
+        c = self.c
+        k = self.k
+
+        A = np.array([[0, 1], [-k/m, -c/m]])
+        B11 = np.array([[-1], [c/m]])
+        B = np.array([[0], [1/m]])
+
+        return A, B, B11
+
+    def update(self, wk: float):
+
+        A, B, B11 = self.A, self.B, self.B11
+        dt = self.dt
+        X = self.X.copy()
+
+        V1 = X + 0  # id(V1) != id(X)
+        V2 = X + 0.5*V1*dt
+        V3 = X + 0.5*V2*dt
+        V4 = X + V3*dt
+
+        uk = -self.K @ self.X
+
+        X += (A @ (V1 + 2*V2 + 2*V3 + V4)/6 + B * uk + B11 * wk) * dt
+        self.X = X
+
+    def calculate_force(self):
+        uk = 0
 
 
 # 以下是质量-阻尼-弹簧系统中各零部件的图形绘制方法

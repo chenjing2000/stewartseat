@@ -48,7 +48,7 @@ class MainWindow(QMainWindow):
         self.tabpage2 = TabPage2(self.data, self.msd, self.pid, self.tabpage1)
 
         self.tabpages.addTab(self.tabpage1, "基础控制")
-        self.tabpages.addTab(self.tabpage2, "传递函数")
+        self.tabpages.addTab(self.tabpage2, "进阶控制")
 
         main_layout.addWidget(self.tabpages)
 
