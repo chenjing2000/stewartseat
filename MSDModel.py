@@ -30,11 +30,13 @@ class DataGroup:
     frequency: float = 2.0
     dt: float = 0.001
     time_stop: float = 5.0
+    time_stop_default: float = 5.0
 
     # external excitation
-    isimporting: bool = False
+    is_importing: bool = False
     filename: str = None
     skiprows: int = 3
+    is_reading_success: bool = False
 
 
 class MSDPlant:

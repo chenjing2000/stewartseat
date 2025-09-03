@@ -284,7 +284,7 @@ class TabPage1(QWidget):
             self.data.time_stop = float(self.sim_boxes[2].text())
 
             # external excitation
-            self.data.isimporting = self.sim_checkboxes[0].isChecked()
+            self.data.is_importing = self.sim_checkboxes[0].isChecked()
             self.data.skiprows = int(self.sim_boxes[3].text())
 
             self.data_updated.emit()
@@ -523,7 +523,7 @@ class TabPage1(QWidget):
         self.frequency = self.data.frequency
         self.amplitude = self.data.amplitude
 
-        self.isimporting = self.data.isimporting
+        self.is_importing = self.data.is_importing
         self.filename = self.data.filename
         self.skiprows = self.data.skiprows
 
@@ -543,35 +543,53 @@ class TabPage1(QWidget):
 
     def get_typical_signal(self):
 
-        if self.data.isimporting and self.data.filename:
-            result = self.read_data_in_csv(self.data.filename,
-                                           self.data.skiprows)
-            if result:
-                xdata, ydata = result
-            else:
-                self.status_changed.emit("Warning: No data is imported.")
+        if self.data.is_importing and self.data.filename:
+            self.data.is_reading_success = False
+
+            try:
+                self.status_changed.emit(f"Reading {self.data.filename}")
+                result = self.read_data_in_csv(self.data.filename,
+                                               self.data.skiprows)
+                if result:
+                    xdata, ydata = result
+                else:
+                    self.status_changed.emit("Warning: No data is imported.")
+                    return None
+
+                if xdata[-1] - xdata[0] < 0.1:
+                    self.status_changed.emit("Warning: Time is too short.")
+                    return None
+
+                if xdata[-1] - xdata[0] > self.time_stop:
+                    mask = xdata <= self.time_stop
+                    ydata = ydata[mask]
+                    xdata = xdata[mask]
+                    self.status_changed.emit(
+                        f"Warning: Only {self.time_stop} s WILL run.")
+
+                xdata -= xdata[0]
+                time = np.arange(xdata[0], xdata[-1], self.dt)
+                signal = np.interp(time, xdata, ydata)
+
+                self.time_stop = xdata[-1]
+                self.data.time_stop = xdata[-1]
+                self.data_updated.emit()
+
+                self.data.is_reading_success = True
+                return signal
+
+            except (Exception, TypeError, IndexError) as e:
+                self.status_changed.emit(f"Error:{e}")
                 return None
 
-            if xdata[-1] - xdata[0] < 0.1:
-                self.status_changed.emit("Warning: Time is too short.")
-                return None
-
-            if xdata[-1] - xdata[0] > self.time_stop:
-                mask = xdata <= self.time_stop
-                ydata = ydata[mask]
-                xdata = xdata[mask]
-                self.status_changed.emit(
-                    f"Warning: Only {self.time_stop} s WILL run.")
-
-            xdata -= xdata[0]
-            time = np.arange(xdata[0], xdata[-1], self.dt)
-            signal = np.interp(time, xdata, ydata)
-
-            self.time_stop = xdata[-1]
-
-            return signal
+        else:
+            tol = 1e-4
+            if np.abs(self.data.time_stop - self.data.time_stop_default) > tol:
+                self.data.time_stop = self.data.time_stop_default
+                self.data_updated.emit()
 
         dt = self.dt
+        self.time = np.arange(0, self.data.time_stop, self.data.dt)
         nt = len(self.time)
 
         signal = np.zeros(nt, dtype=float)
@@ -609,6 +627,7 @@ class TabPage1(QWidget):
 
         if not file_path or not os.path.exists(file_path):
             self.status_changed.emit("Warning: File doesn't exist.")
+            self.data.is_reading_success = False
             return None
 
         xdata = []
@@ -665,6 +684,10 @@ class TabPage1(QWidget):
         if not self.simulation_data_preparation():
             return
 
+        if self.data.is_importing and not self.data.is_reading_success:
+            self.status_changed.emit("Data reading failure.")
+            return
+
         self.status_changed.emit("Simulation starts.")
 
         self.simulation_window_preparation()
@@ -704,6 +727,10 @@ class TabPage1(QWidget):
         #
 
         if not self.simulation_data_preparation():
+            return
+
+        if self.data.is_importing and not self.data.is_reading_success:
+            self.status_changed.emit("Data reading failure.")
             return
 
         self.status_changed.emit("Animation starts.")
@@ -1036,6 +1063,11 @@ class TabPage2(QWidget):
             else:
                 den[idx] = float(box_str)
 
+        if np.allclose(num, 0, 0, 1e-6) and np.allclose(den, 1, 0, 1e-6):
+            self.status_changed.emit(
+                "Business cooperation, please contact: dyyydxxx@gmail.com")
+            return None
+
         if np.allclose(num, 0, 0, 1e-6) or np.allclose(den, 0, 0, 1e-6):
             self.status_changed.emit("Numerator or denominator is Null.")
             return None
@@ -1138,10 +1170,14 @@ class TabPage2(QWidget):
         if not self.simulation_data_preparation():
             return
 
+        if self.data.is_importing and not self.data.is_reading_success:
+            self.status_changed.emit("Data reading failure.")
+            return
+
         # 离散时域响应
         # 0. window preparation
         if self.discrete_window is None or not self.discrete_window.isVisible():
-            self.discrete_window = TransientWindow()   # 新建
+            self.discrete_window = TransientWindow()
 
         self.discrete_window.show()
         self.discrete_window.raise_()
