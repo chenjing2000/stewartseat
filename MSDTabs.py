@@ -13,7 +13,8 @@ import control as ct
 import csv
 
 from MSDChart import *
-from MSDModel import DataGroup, MSDPlant, PIDController, MassSpringDamperGL
+from MSDModel import (DataGroup, MSDPlant, PIDController,
+                      LQRController, MassSpringDamperGL)
 
 
 class TabPage1(QWidget):
@@ -799,6 +800,7 @@ class TabPage2(QWidget):
     def __init__(self, data: DataGroup,
                  msd: MSDPlant,
                  pid: PIDController,
+                 lqr: LQRController,
                  tabpage1: TabPage1,
                  parent=None):
 
@@ -807,6 +809,7 @@ class TabPage2(QWidget):
         self.data = data
         self.msd = msd
         self.pid = pid
+        self.lqr = lqr
         self.tabpage1 = tabpage1
 
         self.Hs = 1.0  # default transfer function
@@ -925,25 +928,25 @@ class TabPage2(QWidget):
         lqr_layout_1 = QHBoxLayout()
         self.lqr_boxes = []
 
-        key_label = QLabel("Q")
+        key_label = QLabel("Q:")
         key_label.setFixedWidth(50)
         key_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lqr_layout_1.addWidget(key_label)
 
-        ebox = self.tabpage1.create_number_box("0.2", 1)
+        ebox = self.create_float_box_for_lqr("1.0")
         self.lqr_boxes.append(ebox)
         lqr_layout_1.addWidget(ebox)
 
-        ebox = self.tabpage1.create_number_box("5.0", 1)
+        ebox = self.create_float_box_for_lqr("0.1")
         self.lqr_boxes.append(ebox)
         lqr_layout_1.addWidget(ebox)
 
-        key_label = QLabel("R")
+        key_label = QLabel("R:")
         key_label.setFixedWidth(50)
         key_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lqr_layout_1.addWidget(key_label)
 
-        ebox = self.tabpage1.create_number_box("1000", 1)
+        ebox = self.create_float_box_for_lqr("1e-4")
         self.lqr_boxes.append(ebox)
         lqr_layout_1.addWidget(ebox)
 
@@ -964,6 +967,20 @@ class TabPage2(QWidget):
                         self.discrete_window, self.transient_window_2,
                         self.frequency_window_2]
         return windows_list
+
+    def create_float_box_for_lqr(self, value: str):
+        #
+        validator = QDoubleValidator(1e-12, 1e8, 8)
+        validator.setNotation(QDoubleValidator.ScientificNotation)
+
+        ebox = QLineEdit(value)
+        ebox.setValidator(validator)
+        ebox.textChanged.connect(lambda: self.tabpage1.data_checking(ebox))
+
+        ebox.setMaximumWidth(100)
+        ebox.setAlignment(Qt.AlignmentFlag.AlignRight)
+
+        return ebox
 
     def btn_show_infos_clicked(self):
 
@@ -1065,7 +1082,7 @@ class TabPage2(QWidget):
         # ZPK 配置方式
         if method == 1:
             order = self.comboboxes[0].currentIndex() + 1
-            self.dialog_zpk = ZPKDialog(order=order, parent=self.parent)
+            self.dialog_zpk = ZPKDialog(order=order, parent=self)
 
             if self.dialog_zpk.exec() == QDialog.Accepted:
                 Gs = ct.zpk(
@@ -1309,7 +1326,7 @@ class TabPage2(QWidget):
         if control_type < 3:
             result = self.get_transfer_function_from_boxes()
             if not result:
-                return
+                return None
             else:
                 Hs = result
 
@@ -1336,6 +1353,12 @@ class TabPage2(QWidget):
         if not self.simulation_data_preparation():
             return
 
+        result = self.get_system_transfer_functions()
+        if not result:
+            return
+
+        Gs, Gb = result
+
         # 0. window preparation
         if self.transient_window_2 is None:
             self.transient_window_2 = TransientWindow()   # 新建
@@ -1352,25 +1375,23 @@ class TabPage2(QWidget):
 
         time = self.time
 
-        Gs, Gb = self.get_system_transfer_functions()
-
         t, y = ct.impulse_response(Gs, time)
-        plot_widget_i.plot(t, y, pen=pg.mkPen(
-            color='b', width=2), name="开环系统脉冲响应")
+
+        penb = pg.mkPen(color='b', width=2)
+        penr = pg.mkPen(color='r', width=2)
+
+        plot_widget_i.plot(t, y, pen=penb, name="开环系统脉冲响应")
 
         t, y = ct.impulse_response(Gb, time)
-        plot_widget_i.plot(t, y, pen=pg.mkPen(
-            color='r', width=2), name="闭环系统脉冲响应")
+        plot_widget_i.plot(t, y, pen=penr, name="闭环系统脉冲响应")
 
         plot_widget_i.setLabel("left", "displacement (m)")
 
         t, y = ct.step_response(Gs, time)
-        plot_widget_j.plot(t, y, pen=pg.mkPen(
-            color='b', width=2), name="开环系统阶跃响应")
+        plot_widget_j.plot(t, y, pen=penb, name="开环系统阶跃响应")
 
         t, y = ct.step_response(Gb, time)
-        plot_widget_j.plot(t, y, pen=pg.mkPen(
-            color='r', width=2), name="闭环系统阶跃响应")
+        plot_widget_j.plot(t, y, pen=penr, name="闭环系统阶跃响应")
 
         plot_widget_j.setLabel("left", "displacement (m)")
 
@@ -1379,12 +1400,10 @@ class TabPage2(QWidget):
         x = self.amplitude * np.sin(omega*time)
 
         t, y = ct.forced_response(Gs, T=time, inputs=x)
-        plot_widget_k.plot(t, y, pen=pg.mkPen(
-            color='b', width=2), name="开环系统正弦响应")
+        plot_widget_k.plot(t, y, pen=penb, name="开环系统正弦响应")
 
         t, y = ct.forced_response(Gb, T=time, inputs=x)
-        plot_widget_k.plot(t, y, pen=pg.mkPen(
-            color='r', width=2), name="闭环系统正弦响应")
+        plot_widget_k.plot(t, y, pen=penr, name="闭环系统正弦响应")
 
         plot_widget_k.setLabel("left", "displacement (m)")
 
@@ -1392,6 +1411,12 @@ class TabPage2(QWidget):
 
         if not self.simulation_data_preparation():
             return
+
+        result = self.get_system_transfer_functions()
+        if not result:
+            return
+
+        Gs, Gb = result
 
         if self.frequency_window_2 is None:
             self.frequency_window_2 = FrequencyWindow()   # 新建
@@ -1401,8 +1426,6 @@ class TabPage2(QWidget):
         self.frequency_window_2.activateWindow()
 
         self.frequency_window_2.clear_plots()
-
-        Gs, Gb = self.get_system_transfer_functions()
 
         # 开环\闭环系统频率特性
         self.frequency_window_2.plot_frequency_figures(Gs, 'b', '开环系统频率特性')
@@ -1441,5 +1464,73 @@ class TabPage2(QWidget):
 
         return True
 
+    def get_LQR_matrices_from_boxes(self):
+
+        try:
+            q1 = float(self.lqr_boxes[0].text())
+            q2 = float(self.lqr_boxes[1].text())
+
+            Q = np.diag([q1, q2])
+
+            ri = float(self.lqr_boxes[2].text())
+
+            R = ri
+
+            return Q, R
+        except:
+            self.status_changed.emit("Invalid data input for LQR.")
+            return None
+
     def btn_lqr_transient_clicked(self):
-        pass
+
+        if not self.simulation_data_preparation():
+            return
+
+        if self.data.is_importing and not self.data.is_reading_success:
+            self.status_changed.emit("Data reading failure.")
+            return
+
+        result = self.get_LQR_matrices_from_boxes()
+        if not result:
+            return
+
+        self.lqr.Q, self.lqr.R = result
+        self.lqr.reset()
+
+        # 0. window preparation
+        if self.transient_window_2 is None:
+            self.transient_window_2 = TransientWindow()   # 新建
+
+        self.transient_window_2.show()
+        self.transient_window_2.raise_()
+        self.transient_window_2.activateWindow()
+
+        self.transient_window_2.clear_plots()
+
+        plot_widget_i = self.transient_window_2.plot_widget_1
+        plot_widget_j = self.transient_window_2.plot_widget_2
+        plot_widget_k = self.transient_window_2.plot_widget_3
+
+        time = self.time
+        nt = len(time)
+
+        try:
+            for idx in range(nt-1):
+                self.lqr.update(self.excitation[idx:idx+2])
+
+                self.x_series[idx] = self.lqr.x
+                self.v_series[idx] = self.lqr.v
+                self.a_series[idx] = self.lqr.a
+                self.f_series[idx] = self.lqr.f
+        except Exception as e:
+            self.status_changed.emit(f"Error:{e}")
+
+        penb = pg.mkPen(color='b', width=2)
+        penr = pg.mkPen(color='r', width=2)
+
+        plot_widget_i.plot(self.time[:-1], self.x_series[:-1], pen=penb)
+        plot_widget_i.plot(self.time[:-1], self.excitation[:-1], pen=penr)
+        plot_widget_j.plot(self.time[:-1], self.v_series[:-1], pen=penb)
+        plot_widget_k.plot(self.time[:-1], self.f_series[:-1], pen=penb)
+
+        self.status_changed.emit("LQR simulation finishes.")

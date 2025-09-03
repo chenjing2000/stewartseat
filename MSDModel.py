@@ -39,13 +39,18 @@ class DataGroup:
     skiprows: int = 3
     is_reading_success: bool = False
 
+    # constraints
+    MAX_FORCE: int = 1e5
+
 
 class MSDPlant:
-    def __init__(self, mass: float = 10, damping: float = 40, stiffness: float = 1000, dt: float = 0.001):
-        self.m = mass
-        self.c = damping
-        self.k = stiffness
-        self.dt = dt
+    def __init__(self, data: DataGroup):
+        self.data = data
+
+        self.m = self.data.mass
+        self.c = self.data.damping
+        self.k = self.data.stiffness
+        self.dt = self.data.dt
 
         self.x = 0.0  # position
         self.v = 0.0  # velocity
@@ -97,20 +102,22 @@ class MSDPlant:
         force = uk - self.k*(self.x - xe) - self.c*(self.v - ve)
         self.a = force / self.m
 
-    def update_parameters(self, data: DataGroup):
+    def update_parameters(self):
 
-        self.m = data.mass
-        self.c = data.damping
-        self.k = data.stiffness
-        self.dt = data.dt
+        self.m = self.data.mass
+        self.c = self.data.damping
+        self.k = self.data.stiffness
+        self.dt = self.data.dt
 
 
 class PIDController:
-    def __init__(self, kp: float, ki: float, kd: float, dt: float = 0.001):
-        self.kp = kp
-        self.ki = ki
-        self.kd = kd
-        self.dt = dt
+    def __init__(self, data: DataGroup):
+        self.data = data
+
+        self.kp = self.data.kp
+        self.ki = self.data.ki
+        self.kd = self.data.kd
+        self.dt = self.data.dt
 
         self.integral = 0.0
         self.error_prev = 0.0
@@ -122,7 +129,8 @@ class PIDController:
         derivative = (error - self.error_prev) / self.dt
         self.error_prev = error
         output = self.kp * error + self.ki * self.integral + self.kd * derivative
-        output = max(min(output, 1e5), -1e5)  # 最大输出载荷 100,000 N
+        output = max(min(output, self.data.MAX_FORCE),
+                     -self.data.MAX_FORCE)  # 最大输出载荷 100,000 N
         return output
 
     def reset(self):
@@ -130,32 +138,34 @@ class PIDController:
         self.integral = 0.0
         self.error_prev = 0.0
 
-    def update_parameters(self, data: DataGroup):
+    def update_parameters(self):
 
-        self.kp = data.kp
-        self.ki = data.ki
-        self.kd = data.kd
-        self.dt = data.dt
+        self.kp = self.data.kp
+        self.ki = self.data.ki
+        self.kd = self.data.kd
+        self.dt = self.data.dt
 
 
 class LQRController:
-    def __init__(self, data: DataGroup, Q, R, dt: float = 0.001):
+    def __init__(self, data: DataGroup):
         self.data = data
 
         self.m = self.data.mass
         self.c = self.data.damping
         self.k = self.data.stiffness
-        self.dt = dt
+        self.dt = self.data.dt
 
-        self.A, self.B, self.B11 = self.state_matrices()
-        self.X = np.zeros(2, float)
+        self.Q = np.eye(2, dtype=float)
+        self.R = 10.0
 
-        self.Q = Q
-        self.R = R
+        self.x = 0
+        self.v = 0
+        self.a = 0
+        self.f = 0
 
-        self.K, S, E = ct.lqr(self.A, self.B, self.Q, self.R)
+        self.reset()
 
-    def state_matrices(self):
+    def reset(self):
         # X = [x-z, dx]
         # DX = A*X + B11*w + B*u, where w = dz
         #
@@ -168,26 +178,55 @@ class LQRController:
         B11 = np.array([[-1], [c/m]])
         B = np.array([[0], [1/m]])
 
-        return A, B, B11
+        # K: 2D array, State feedback gains.
+        # S: 2D array, Solution to Riccati equation.
+        # E: 1D array, Eigenvalues of the closed loop system.
+        K, S, E = ct.lqr(A, B, self.Q, self.R)
 
-    def update(self, wk: float):
+        self.A = A
+        self.B = B
+        self.B11 = B11
+        self.K = K
 
-        A, B, B11 = self.A, self.B, self.B11
+        self.x = 0
+        self.v = 0
+        self.a = 0
+        self.f = 0
+
+    def update(self, excitation: np.ndarray):
+
+        zi, zj = excitation
+        wk = (zj - zi) / self.dt
+
+        A, B, B11 = self.A, self.B.flatten(), self.B11.flatten()
         dt = self.dt
-        X = self.X.copy()
+        K = self.K
 
-        V1 = X + 0  # id(V1) != id(X)
-        V2 = X + 0.5*V1*dt
-        V3 = X + 0.5*V2*dt
-        V4 = X + V3*dt
+        X = np.array([self.x - zi, self.v])
+        uk = -K @ X
+        uk = max(min(uk, self.data.MAX_FORCE),
+                 -self.data.MAX_FORCE)  # 最大输出载荷 100,000 N
 
-        uk = -self.K @ self.X
+        def derivative(X): return A @ X + B * uk + B11 * wk
 
-        X += (A @ (V1 + 2*V2 + 2*V3 + V4)/6 + B * uk + B11 * wk) * dt
-        self.X = X
+        K1 = derivative(X)
+        K2 = derivative(X + 0.5 * K1 * dt)
+        K3 = derivative(X + 0.5 * K2 * dt)
+        K4 = derivative(X + K3 * dt)
 
-    def calculate_force(self):
-        uk = 0
+        X += (K1 + 2*K2 + 2*K3 + K4)/6 * dt
+
+        self.x = X[0] + zj
+        self.v = X[1]
+        self.f = uk - self.c * (self.v - wk) - self.k * (self.x - zj)
+        self.a = self.f / self.m
+
+    def update_parameters(self):
+
+        self.m = self.data.mass
+        self.c = self.data.damping
+        self.k = self.data.stiffness
+        self.dt = self.data.dt
 
 
 # 以下是质量-阻尼-弹簧系统中各零部件的图形绘制方法

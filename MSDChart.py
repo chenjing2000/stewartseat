@@ -303,7 +303,7 @@ class ZPKDialog(QDialog):
         label2 = QLabel("零点")
         layout_2.addWidget(label2)
 
-        self.zero_boxes = self.parent.tabpage2.set_transfer_function_boxes(
+        self.zero_boxes = self.parent.set_transfer_function_boxes(
             layout_2, order - 1, True)
 
         layout.addLayout(layout_2)
@@ -313,7 +313,7 @@ class ZPKDialog(QDialog):
         label3 = QLabel("极点")
         layout_3.addWidget(label3)
 
-        self.pole_boxes = self.parent.tabpage2.set_transfer_function_boxes(
+        self.pole_boxes = self.parent.set_transfer_function_boxes(
             layout_3, order, False)
 
         layout.addLayout(layout_3)
@@ -326,8 +326,6 @@ class ZPKDialog(QDialog):
         layout_4.addWidget(btn_zpk)
 
         layout.addLayout(layout_4)
-
-        self.setStyleSheet(self.parent.styleSheet)
 
         self.setLayout(layout)
 

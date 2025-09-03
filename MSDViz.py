@@ -20,9 +20,9 @@ class MainWindow(QMainWindow):
         self.move(200, 100)
 
         self.data = DataGroup()
-        self.msd = MSDPlant(
-            self.data.mass, self.data.damping, self.data.stiffness)
-        self.pid = PIDController(self.data.kp, self.data.ki, self.data.kd)
+        self.msd = MSDPlant(self.data)
+        self.pid = PIDController(self.data)
+        self.lqr = LQRController(self.data)
 
         self._setup_ui()
 
@@ -30,9 +30,11 @@ class MainWindow(QMainWindow):
         self.tabpage2.status_changed.connect(self.update_status_infos)
 
         self.tabpage1.data_updated.connect(
-            lambda: self.msd.update_parameters(self.data))
+            lambda: self.msd.update_parameters())
         self.tabpage1.data_updated.connect(
-            lambda: self.pid.update_parameters(self.data))
+            lambda: self.pid.update_parameters())
+        self.tabpage1.data_updated.connect(
+            lambda: self.lqr.update_parameters())
 
     def _setup_ui(self):
 
@@ -45,7 +47,8 @@ class MainWindow(QMainWindow):
 
         self.tabpages = QTabWidget()
         self.tabpage1 = TabPage1(self.data, self.msd, self.pid, self.msdviz)
-        self.tabpage2 = TabPage2(self.data, self.msd, self.pid, self.tabpage1)
+        self.tabpage2 = TabPage2(
+            self.data, self.msd, self.pid, self.lqr, self.tabpage1)
 
         self.tabpages.addTab(self.tabpage1, "基础控制")
         self.tabpages.addTab(self.tabpage2, "进阶控制")
