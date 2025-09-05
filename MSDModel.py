@@ -163,6 +163,8 @@ class LQRController:
         self.a = 0
         self.f = 0
 
+        self.msg = ""
+
         self.reset()
 
     def reset(self):
@@ -175,23 +177,33 @@ class LQRController:
         k = self.k
 
         A = np.array([[0, 1], [-k/m, -c/m]])
-        B11 = np.array([[-1], [c/m]])
         B = np.array([[0], [1/m]])
-
-        # K: 2D array, State feedback gains.
-        # S: 2D array, Solution to Riccati equation.
-        # E: 1D array, Eigenvalues of the closed loop system.
-        K, S, E = ct.lqr(A, B, self.Q, self.R)
+        B11 = np.array([[-1], [c/m]])
 
         self.A = A
         self.B = B
         self.B11 = B11
-        self.K = K
+        self.C = np.eye(2, dtype=float)
+        self.D = 0.0
 
         self.x = 0
         self.v = 0
         self.a = 0
         self.f = 0
+
+        # K: 2D array, State feedback gains.
+        # S: 2D array, Solution to Riccati equation.
+        # E: 1D array, Eigenvalues of the closed loop system.
+        try:
+            K, S, E = ct.lqr(A, B, self.Q, self.R)
+            self.K = K
+
+        except Exception as e:
+            self.K = None
+            self.msg = "ERROR: Q or R may be improper to get a valid K."
+            return False
+
+        return True
 
     def update(self, excitation: np.ndarray):
 
@@ -202,24 +214,32 @@ class LQRController:
         dt = self.dt
         K = self.K
 
-        X = np.array([self.x - zi, self.v])
-        uk = -K @ X
-        uk = max(min(uk, self.data.MAX_FORCE),
-                 -self.data.MAX_FORCE)  # 最大输出载荷 100,000 N
+        try:
+            X = np.array([self.x - zi, self.v])
+            uk = -K @ X
+            uk = max(min(uk, self.data.MAX_FORCE),
+                     -self.data.MAX_FORCE)  # 最大输出载荷 100,000 N
+            self.f = uk
 
-        def derivative(X): return A @ X + B * uk + B11 * wk
+            def derivative(X): return A @ X + B * uk + B11 * wk
 
-        K1 = derivative(X)
-        K2 = derivative(X + 0.5 * K1 * dt)
-        K3 = derivative(X + 0.5 * K2 * dt)
-        K4 = derivative(X + K3 * dt)
+            K1 = derivative(X)
+            K2 = derivative(X + 0.5 * K1 * dt)
+            K3 = derivative(X + 0.5 * K2 * dt)
+            K4 = derivative(X + K3 * dt)
 
-        X += (K1 + 2*K2 + 2*K3 + K4)/6 * dt
+            X += (K1 + 2*K2 + 2*K3 + K4)/6 * dt
 
-        self.x = X[0] + zj
-        self.v = X[1]
-        self.f = uk - self.c * (self.v - wk) - self.k * (self.x - zj)
-        self.a = self.f / self.m
+            self.x = X[0] + zj
+            self.v = X[1]
+            force = uk - self.c * (self.v - wk) - self.k * (self.x - zj)
+            self.a = force / self.m
+
+        except Exception as e:
+            self.msg = "ERROR: Update process is interrupted due to K."
+            return False
+
+        return True
 
     def update_parameters(self):
 

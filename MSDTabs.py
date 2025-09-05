@@ -952,10 +952,15 @@ class TabPage2(QWidget):
 
         lqr_layout_2 = QHBoxLayout()
 
-        btn_lqr_transient_response = QPushButton("transcient response")
+        btn_lqr_transient_response = QPushButton("闭环时域响应")
         btn_lqr_transient_response.clicked.connect(
             self.btn_lqr_transient_clicked)
         lqr_layout_2.addWidget(btn_lqr_transient_response)
+
+        btn_lqr_frequency_response = QPushButton("闭环频谱分析")
+        btn_lqr_frequency_response.clicked.connect(
+            self.btn_lqr_frequency_clicked)
+        lqr_layout_2.addWidget(btn_lqr_frequency_response)
 
         self.lqr_layout.addLayout(lqr_layout_1)
         self.lqr_layout.addLayout(lqr_layout_2)
@@ -1472,9 +1477,7 @@ class TabPage2(QWidget):
 
             Q = np.diag([q1, q2])
 
-            ri = float(self.lqr_boxes[2].text())
-
-            R = ri
+            R = float(self.lqr_boxes[2].text())
 
             return Q, R
         except:
@@ -1495,7 +1498,10 @@ class TabPage2(QWidget):
             return
 
         self.lqr.Q, self.lqr.R = result
-        self.lqr.reset()
+        is_K_ok = self.lqr.reset()
+        if not is_K_ok:
+            self.status_changed.emit(self.lqr.msg)
+            return
 
         # 0. window preparation
         if self.transient_window_2 is None:
@@ -1514,23 +1520,130 @@ class TabPage2(QWidget):
         time = self.time
         nt = len(time)
 
-        try:
-            for idx in range(nt-1):
-                self.lqr.update(self.excitation[idx:idx+2])
+        # 1. LQR Control
+        for idx in range(nt-1):
+            is_update_ok = self.lqr.update(self.excitation[idx:idx+2])
+            if not is_update_ok:
+                self.status_changed.emit(self.lqr.msg)
+                break
 
-                self.x_series[idx] = self.lqr.x
-                self.v_series[idx] = self.lqr.v
-                self.a_series[idx] = self.lqr.a
-                self.f_series[idx] = self.lqr.f
-        except Exception as e:
-            self.status_changed.emit(f"Error:{e}")
+            self.x_series[idx] = self.lqr.x
+            self.v_series[idx] = self.lqr.v
+            self.a_series[idx] = self.lqr.a
+            self.f_series[idx] = self.lqr.f
 
-        penb = pg.mkPen(color='b', width=2)
-        penr = pg.mkPen(color='r', width=2)
+        def pens(color): return pg.mkPen(color=color, width=2)
 
-        plot_widget_i.plot(self.time[:-1], self.x_series[:-1], pen=penb)
-        plot_widget_i.plot(self.time[:-1], self.excitation[:-1], pen=penr)
-        plot_widget_j.plot(self.time[:-1], self.v_series[:-1], pen=penb)
-        plot_widget_k.plot(self.time[:-1], self.f_series[:-1], pen=penb)
+        plot_widget_i.plot(
+            self.time[:-1], self.excitation[:-1], pen=pens('r'), name="excitation")
+        plot_widget_i.plot(
+            self.time[:-1], self.x_series[:-1], pen=pens('b'), name="闭环位移响应")
+        plot_widget_j.plot(
+            self.time[:-1], self.a_series[:-1], pen=pens('b'), name="闭环速度响应")
+        plot_widget_k.plot(
+            self.time[:-1], self.f_series[:-1], pen=pens('b'), name="闭环加速度响应")
 
-        self.status_changed.emit("LQR simulation finishes.")
+        # 2. No Control
+        x_series = np.zeros(nt, dtype=float)
+        v_series = np.zeros(nt, dtype=float)
+        a_series = np.zeros(nt, dtype=float)
+        f_series = np.zeros(nt, dtype=float)
+
+        self.msd.reset()
+        for idx in range(nt-1):
+            self.msd.update(self.excitation[idx:idx+2], 0.0)
+
+            x_series[idx] = self.msd.x
+            v_series[idx] = self.msd.v
+            a_series[idx] = self.msd.a
+            f_series[idx] = 0.0
+
+        plot_widget_i.plot(
+            self.time[:-1], x_series[:-1], pen=pens('g'), name="开环位移响应")
+        plot_widget_j.plot(
+            self.time[:-1], a_series[:-1], pen=pens('g'), name="开环速度响应")
+        plot_widget_k.plot(
+            self.time[:-1], f_series[:-1], pen=pens('g'), name="开环加速度响应")
+
+    def btn_lqr_frequency_clicked(self):
+
+        if not self.simulation_data_preparation():
+            return
+
+        if self.data.is_importing and not self.data.is_reading_success:
+            self.status_changed.emit("Data reading failure.")
+            return
+
+        result = self.get_LQR_matrices_from_boxes()
+        if not result:
+            return
+
+        self.lqr.Q, self.lqr.R = result
+        is_K_ok = self.lqr.reset()
+        if not is_K_ok:
+            self.status_changed.emit(self.lqr.msg)
+            return
+
+        # 0. simplification for state matrices
+        K = self.lqr.K
+
+        m = self.lqr.m
+        c = self.lqr.c
+        k = self.lqr.k
+
+        # 绘图窗口
+        if self.frequency_window_2 is None:
+            self.frequency_window_2 = BodeWindow()   # 新建
+
+        self.frequency_window_2.show()
+        self.frequency_window_2.raise_()
+        self.frequency_window_2.activateWindow()
+
+        self.frequency_window_2.clear_plots()
+
+        plot_widget_i = self.frequency_window_2.plot_widget_1
+        plot_widget_j = self.frequency_window_2.plot_widget_2
+
+        # 1. 开环传递函数
+        Gs = ct.tf([c, k], [m, c, k])
+
+        mag, phase, omega = ct.frequency_response(Gs)
+
+        def pens(color): return pg.mkPen(color=color, width=2)
+
+        plot_widget_i.plot(omega, 20*np.log10(mag),
+                           pen=pens('b'), name='开环位移幅值特性')
+        plot_widget_i.plot(omega, 20*np.log10(mag * omega),
+                           pen=pens('r'), name='开环速度幅值特性')
+        plot_widget_i.plot(omega, 20*np.log10(mag * omega ** 2),
+                           pen=pens('g'), name='开环加速度幅值特性')
+
+        plot_widget_j.plot(omega, phase,
+                           pen=pens('b'), name='开环位移相位特性')
+        plot_widget_j.plot(omega, phase + np.pi/2,
+                           pen=pens('r'), name='开环速度相位特性')
+        plot_widget_j.plot(omega, phase + np.pi,
+                           pen=pens('g'), name='开环加速度相位特性')
+
+        # 闭环频率特性
+        # 2. 闭环传递函数
+        Gb = ct.tf([c, k+K[0][0]], [m, c+K[0][1], k+K[0][0]])
+
+        mag, phase, omega = ct.frequency_response(Gb)
+
+        def pens(color):
+            return pg.mkPen(color=color, width=2, style=Qt.DashLine)
+
+        plot_widget_i.plot(omega, 20*np.log10(mag),
+                           pen=pens('b'), name='闭环位移幅值特性')
+        plot_widget_i.plot(omega, 20*np.log10(mag * omega),
+                           pen=pens('r'), name='闭环速度幅值特性')
+        plot_widget_i.plot(omega, 20*np.log10(mag * omega ** 2),
+                           pen=pens('g'), name='闭环加速度幅值特性')
+
+        plot_widget_j.plot(omega, phase,
+                           pen=pens('b'), name='闭环位移相位特性')
+        plot_widget_j.plot(omega, phase + np.pi/2,
+                           pen=pens('r'), name='闭环速度相位特性')
+        plot_widget_j.plot(omega, phase + np.pi,
+                           pen=pens('g'), name='闭环加速度相位特性')
