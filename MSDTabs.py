@@ -45,7 +45,7 @@ class TabPage1(QWidget):
         # 定时器
         self.timer = QTimer(self)
         self.timer.setInterval(10)  # 每 10 毫秒触发一次
-        self.timer.timeout.connect(self.update_simulation)
+        self.timer.timeout.connect(self.update_animation)
 
     def _setup_ui(self):
 
@@ -120,13 +120,13 @@ class TabPage1(QWidget):
         self.pid_boxes.append(ebox)
         pidset_layout_2.addWidget(ebox, 10)
 
-        btn_bodeplot = QPushButton("bode")
+        btn_bodeplot = QPushButton("Bode")
         btn_bodeplot.clicked.connect(self.btn_bodeplot_clicked)
         pidset_layout_2.addWidget(btn_bodeplot, 9)
 
         btn_frequency_analyses = QPushButton("频谱")
         btn_frequency_analyses.clicked.connect(
-            self.btn_frequency_analyses_clicked)
+            self.btn_frequency_clicked)
         pidset_layout_2.addWidget(btn_frequency_analyses, 9)
 
         pidset_layout.addLayout(pidset_layout_2)
@@ -482,7 +482,7 @@ class TabPage1(QWidget):
         plot_widget_j.plot(omega, phase + np.pi, pen=pg.mkPen(
             color='g', width=2, style=Qt.DashLine), name='闭环加速度相位特性')
 
-    def btn_frequency_analyses_clicked(self):
+    def btn_frequency_clicked(self):
 
         if not self.collect_data():
             return
@@ -505,7 +505,7 @@ class TabPage1(QWidget):
 
         self.frequency_window.add_auxiliary_parts()
 
-    def simulation_data_preparation(self):
+    def simulation_preparation(self):
 
         if not self.collect_data():
             return False
@@ -518,6 +518,8 @@ class TabPage1(QWidget):
         dt = self.data.dt
         self.dt = dt
         self.time_stop = self.data.time_stop
+        self.time = np.arange(0, self.time_stop, dt)
+
         self.target_value = self.data.target_value
         self.control_type = self.data.control_type
         self.signal_type = self.data.signal_type
@@ -530,9 +532,7 @@ class TabPage1(QWidget):
 
         self.excitation = self.get_typical_signal()
 
-        self.time = np.arange(0, self.time_stop, dt)
         nt = len(self.time)
-
         self.x_series = np.zeros(nt, dtype=float)
         self.v_series = np.zeros(nt, dtype=float)
         self.a_series = np.zeros(nt, dtype=float)
@@ -544,6 +544,7 @@ class TabPage1(QWidget):
 
     def get_typical_signal(self):
 
+        # 1. 如果数据是导入的 csv 文件
         if self.data.is_importing and self.data.filename:
             self.data.is_reading_success = False
 
@@ -572,10 +573,6 @@ class TabPage1(QWidget):
                 time = np.arange(xdata[0], xdata[-1], self.dt)
                 signal = np.interp(time, xdata, ydata)
 
-                self.time_stop = xdata[-1]
-                self.data.time_stop = xdata[-1]
-                self.data_updated.emit()
-
                 self.data.is_reading_success = True
                 return signal
 
@@ -583,14 +580,8 @@ class TabPage1(QWidget):
                 self.status_changed.emit(f"Error:{e}")
                 return None
 
-        else:
-            tol = 1e-4
-            if np.abs(self.data.time_stop - self.data.time_stop_default) > tol:
-                self.data.time_stop = self.data.time_stop_default
-                self.data_updated.emit()
-
+        # 2. 如果输入不是导入的文件，而是采用预设激励
         dt = self.dt
-        self.time = np.arange(0, self.data.time_stop, self.data.dt)
         nt = len(self.time)
 
         signal = np.zeros(nt, dtype=float)
@@ -662,7 +653,7 @@ class TabPage1(QWidget):
 
         return np.array(xdata), np.array(ydata)
 
-    def simulation_window_preparation(self):
+    def transient_window_preparation(self):
 
         if self.transient_window is None:
             self.transient_window = TransientWindow()   # 新建
@@ -682,7 +673,7 @@ class TabPage1(QWidget):
 
     def btn_simulate_clicked(self):
 
-        if not self.simulation_data_preparation():
+        if not self.simulation_preparation():
             return
 
         if self.data.is_importing and not self.data.is_reading_success:
@@ -691,12 +682,15 @@ class TabPage1(QWidget):
 
         self.status_changed.emit("Simulation starts.")
 
-        self.simulation_window_preparation()
+        self.transient_window_preparation()
 
         if self.timer.isActive():
             self.timer.stop()
 
-        for idx in range(len(self.time)-1):
+        nt = len(self.excitation)
+        time = np.arange(0, nt * self.dt, self.dt)
+
+        for idx in range(nt-2):
             target_list = [self.msd.x,
                            self.msd.v,
                            self.msd.a,
@@ -714,20 +708,19 @@ class TabPage1(QWidget):
 
         # 绘制曲线
         self.transient_window.plot_curve_11.setData(
-            self.time[:-1], self.x_series[:-1])
+            time[:-2], self.x_series[:-2])
         self.transient_window.plot_curve_12.setData(
-            self.time[:-1], self.excitation[:-1])
+            time[:-2], self.excitation[:-2])
         self.transient_window.plot_curve_2.setData(
-            self.time[:-1], self.a_series[:-1])
+            time[:-2], self.a_series[:-2])
         self.transient_window.plot_curve_3.setData(
-            self.time[:-1], self.f_series[:-1])
+            time[:-2], self.f_series[:-2])
 
         self.status_changed.emit("Simulation finishes.")
 
     def btn_animate_clicked(self):
         #
-
-        if not self.simulation_data_preparation():
+        if not self.simulation_preparation():
             return
 
         if self.data.is_importing and not self.data.is_reading_success:
@@ -736,14 +729,17 @@ class TabPage1(QWidget):
 
         self.status_changed.emit("Animation starts.")
 
-        self.simulation_window_preparation()
+        self.transient_window_preparation()
 
         # 停止并重新启动定时器，开始动画
         if self.timer.isActive():
             self.timer.stop()
         self.timer.start()
 
-    def update_simulation(self):
+        nt = len(self.excitation)
+        self.time = np.arange(0, nt * self.dt, self.dt)
+
+    def update_animation(self):
         """
         定时器触发的函数，用于驱动动画和图形更新。
         """
@@ -816,11 +812,18 @@ class TabPage2(QWidget):
 
         self._setup_ui()
 
+        self.tf_transient_window = None
+        self.tf_frequency_window = None
+        self.discrete_window = None
         self.transient_window = None
         self.frequency_window = None
-        self.discrete_window = None
+        self.lqr_transient_window = None
+        self.lqr_frequency_window = None
+
         self.transient_window_2 = None
         self.frequency_window_2 = None
+        self.discrete_window = None
+        self.bode_window_2 = None
 
     def _setup_ui(self):
 
@@ -888,14 +891,14 @@ class TabPage2(QWidget):
 
         tf_layout_4 = QHBoxLayout()
 
-        self.btn_time_responses = QPushButton("传递函数时域响应")
-        self.btn_time_responses.clicked.connect(
-            self.btn_transient_responses_clicked)
-        tf_layout_4.addWidget(self.btn_time_responses)
+        self.btn_tf_transient_responses = QPushButton("传递函数时域响应")
+        self.btn_tf_transient_responses.clicked.connect(
+            self.btn_tf_transient_responses_clicked)
+        tf_layout_4.addWidget(self.btn_tf_transient_responses)
 
         self.btn_frequency_analyses = QPushButton("传递函数频谱分析")
         self.btn_frequency_analyses.clicked.connect(
-            self.btn_frequency_analyses_clicked)
+            self.btn_frequency_clicked)
         tf_layout_4.addWidget(self.btn_frequency_analyses)
 
         self.tf_layout.addLayout(tf_layout_4)
@@ -968,9 +971,9 @@ class TabPage2(QWidget):
 
     def get_windows(self):
 
-        windows_list = [self.transient_window, self.frequency_window,
+        windows_list = [self.transient_window_2, self.frequency_window_2,
                         self.discrete_window, self.transient_window_2,
-                        self.frequency_window_2]
+                        self.frequency_window_2, self.bode_window_2]
         return windows_list
 
     def create_float_box_for_lqr(self, value: str):
@@ -989,7 +992,7 @@ class TabPage2(QWidget):
 
     def btn_show_infos_clicked(self):
 
-        if not self.simulation_data_preparation():
+        if not self.simulation_preparation():
             return
 
         dialog = QDialog(self)
@@ -1141,10 +1144,10 @@ class TabPage2(QWidget):
 
         return Hs
 
-    def btn_transient_responses_clicked(self):
+    def btn_tf_transient_responses_clicked(self):
 
         # 0. data preparation
-        if not self.simulation_data_preparation():
+        if not self.simulation_preparation():
             return
 
         result = self.get_transfer_function_from_boxes()
@@ -1194,7 +1197,7 @@ class TabPage2(QWidget):
 
         plot_widget_k.setLabel("left", "displacement (m)")
 
-    def btn_frequency_analyses_clicked(self):
+    def btn_frequency_clicked(self):
 
         result = self.get_transfer_function_from_boxes()
         if not result:
@@ -1228,7 +1231,7 @@ class TabPage2(QWidget):
             Hs = result
 
         # 0. data preparation
-        if not self.simulation_data_preparation():
+        if not self.simulation_preparation():
             return
 
         if self.data.is_importing and not self.data.is_reading_success:
@@ -1355,7 +1358,7 @@ class TabPage2(QWidget):
 
     def btn_model_transient_response_clicked(self):
 
-        if not self.simulation_data_preparation():
+        if not self.simulation_preparation():
             return
 
         result = self.get_system_transfer_functions()
@@ -1414,7 +1417,7 @@ class TabPage2(QWidget):
 
     def btn_model_frequency_analyses_clicked(self):
 
-        if not self.simulation_data_preparation():
+        if not self.simulation_preparation():
             return
 
         result = self.get_system_transfer_functions()
@@ -1438,18 +1441,15 @@ class TabPage2(QWidget):
 
         self.frequency_window_2.add_auxiliary_parts()
 
-    def simulation_data_preparation(self):
+    def simulation_preparation(self):
 
-        if not self.tabpage1.collect_data():
-            return False
-
-        self.msd.reset()
-
-        self.tabpage1.simulation_data_preparation()
+        self.tabpage1.simulation_preparation()
 
         dt = self.data.dt
         self.dt = dt
         self.time_stop = self.data.time_stop
+        self.time = np.arange(0, self.time_stop, dt)
+
         self.target_value = self.data.target_value
         self.control_type = self.data.control_type
         self.signal_type = self.data.signal_type
@@ -1457,7 +1457,6 @@ class TabPage2(QWidget):
         self.amplitude = self.data.amplitude
         self.excitation = self.tabpage1.excitation
 
-        self.time = np.arange(0, self.time_stop, dt)
         nt = len(self.time)
 
         self.x_series = np.zeros(nt, dtype=float)
@@ -1486,7 +1485,7 @@ class TabPage2(QWidget):
 
     def btn_lqr_transient_clicked(self):
 
-        if not self.simulation_data_preparation():
+        if not self.simulation_preparation():
             return
 
         if self.data.is_importing and not self.data.is_reading_success:
@@ -1502,6 +1501,10 @@ class TabPage2(QWidget):
         if not is_K_ok:
             self.status_changed.emit(self.lqr.msg)
             return
+
+        # 关闭定时器
+        if self.tabpage1.timer.isActive():
+            self.tabpage1.timer.stop()
 
         # 0. window preparation
         if self.transient_window_2 is None:
@@ -1521,7 +1524,7 @@ class TabPage2(QWidget):
         nt = len(time)
 
         # 1. LQR Control
-        for idx in range(nt-1):
+        for idx in range(nt-2):
             is_update_ok = self.lqr.update(self.excitation[idx:idx+2])
             if not is_update_ok:
                 self.status_changed.emit(self.lqr.msg)
@@ -1535,13 +1538,13 @@ class TabPage2(QWidget):
         def pens(color): return pg.mkPen(color=color, width=2)
 
         plot_widget_i.plot(
-            self.time[:-1], self.excitation[:-1], pen=pens('r'), name="excitation")
+            self.time[:-2], self.excitation[:-2], pen=pens('r'), name="excitation")
         plot_widget_i.plot(
-            self.time[:-1], self.x_series[:-1], pen=pens('b'), name="闭环位移响应")
+            self.time[:-2], self.x_series[:-2], pen=pens('b'), name="闭环位移响应")
         plot_widget_j.plot(
-            self.time[:-1], self.a_series[:-1], pen=pens('b'), name="闭环速度响应")
+            self.time[:-2], self.a_series[:-2], pen=pens('b'), name="闭环速度响应")
         plot_widget_k.plot(
-            self.time[:-1], self.f_series[:-1], pen=pens('b'), name="闭环加速度响应")
+            self.time[:-2], self.f_series[:-2], pen=pens('b'), name="闭环加速度响应")
 
         # 2. No Control
         x_series = np.zeros(nt, dtype=float)
@@ -1550,7 +1553,7 @@ class TabPage2(QWidget):
         f_series = np.zeros(nt, dtype=float)
 
         self.msd.reset()
-        for idx in range(nt-1):
+        for idx in range(nt-2):
             self.msd.update(self.excitation[idx:idx+2], 0.0)
 
             x_series[idx] = self.msd.x
@@ -1559,15 +1562,15 @@ class TabPage2(QWidget):
             f_series[idx] = 0.0
 
         plot_widget_i.plot(
-            self.time[:-1], x_series[:-1], pen=pens('g'), name="开环位移响应")
+            self.time[:-2], x_series[:-2], pen=pens('g'), name="开环位移响应")
         plot_widget_j.plot(
-            self.time[:-1], a_series[:-1], pen=pens('g'), name="开环速度响应")
+            self.time[:-2], a_series[:-2], pen=pens('g'), name="开环速度响应")
         plot_widget_k.plot(
-            self.time[:-1], f_series[:-1], pen=pens('g'), name="开环加速度响应")
+            self.time[:-2], f_series[:-2], pen=pens('g'), name="开环加速度响应")
 
     def btn_lqr_frequency_clicked(self):
 
-        if not self.simulation_data_preparation():
+        if not self.simulation_preparation():
             return
 
         if self.data.is_importing and not self.data.is_reading_success:
@@ -1592,17 +1595,17 @@ class TabPage2(QWidget):
         k = self.lqr.k
 
         # 绘图窗口
-        if self.frequency_window_2 is None:
-            self.frequency_window_2 = BodeWindow()   # 新建
+        if self.bode_window_2 is None:
+            self.bode_window_2 = BodeWindow()   # 新建
 
-        self.frequency_window_2.show()
-        self.frequency_window_2.raise_()
-        self.frequency_window_2.activateWindow()
+        self.bode_window_2.show()
+        self.bode_window_2.raise_()
+        self.bode_window_2.activateWindow()
 
-        self.frequency_window_2.clear_plots()
+        self.bode_window_2.clear_plots()
 
-        plot_widget_i = self.frequency_window_2.plot_widget_1
-        plot_widget_j = self.frequency_window_2.plot_widget_2
+        plot_widget_i = self.bode_window_2.plot_widget_1
+        plot_widget_j = self.bode_window_2.plot_widget_2
 
         # 1. 开环传递函数
         Gs = ct.tf([c, k], [m, c, k])
