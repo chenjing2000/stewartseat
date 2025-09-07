@@ -532,7 +532,7 @@ class TabPage1(QWidget):
 
         self.excitation = self.get_typical_signal()
 
-        nt = len(self.time)
+        nt = len(self.excitation)
         self.x_series = np.zeros(nt, dtype=float)
         self.v_series = np.zeros(nt, dtype=float)
         self.a_series = np.zeros(nt, dtype=float)
@@ -562,16 +562,10 @@ class TabPage1(QWidget):
                     self.status_changed.emit("Warning: Time is too short.")
                     return None
 
-                if xdata[-1] - xdata[0] > self.time_stop:
-                    mask = xdata <= self.time_stop
-                    ydata = ydata[mask]
-                    xdata = xdata[mask]
-                    self.status_changed.emit(
-                        f"Warning: Only {self.time_stop} s WILL run.")
-
                 xdata -= xdata[0]
-                time = np.arange(xdata[0], xdata[-1], self.dt)
-                signal = np.interp(time, xdata, ydata)
+                self.time_stop = xdata[-1]
+                self.time = np.arange(xdata[0], xdata[-1], self.dt)
+                signal = np.interp(self.time, xdata, ydata)
 
                 self.data.is_reading_success = True
                 return signal
@@ -735,9 +729,6 @@ class TabPage1(QWidget):
         if self.timer.isActive():
             self.timer.stop()
         self.timer.start()
-
-        nt = len(self.excitation)
-        self.time = np.arange(0, nt * self.dt, self.dt)
 
     def update_animation(self):
         """
