@@ -229,13 +229,15 @@ class FrequencyWindow(QWidget):
         plot_widget_i = self.plot_widget_1
         plot_widget_j = self.plot_widget_2
 
-        mag, phase, omega = ct.frequency_response(Gs)
+        mag, phase, omega = ct.frequency_response(Gs, omega_limits=[0.01, 100])
 
         # Bode
         plot_widget_i.plot(omega, 20*np.log10(mag), pen=pg.mkPen(
             color=color, width=2), name=name)
 
         # Nyquist
+        mag, phase, omega = ct.frequency_response(Gs)
+
         realpart = mag * np.cos(phase)
         imagpart = mag * np.sin(phase)
 

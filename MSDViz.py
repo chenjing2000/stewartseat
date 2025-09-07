@@ -162,6 +162,31 @@ class MainWindow(QMainWindow):
                 background: transparent;
                 color: #444;
             }
+            /*
+            * 复选框指示器 (未选中状态)
+            */
+            QCheckBox::indicator {
+                width: 15px;
+                height: 15px;
+                border: 1px solid #999999; /* 边框颜色 */
+                border-radius: 4px; /* 轻微的圆角 */
+                background-color: #f0f0f0; /* 背景颜色 */
+            }
+            /*
+            * 复选框指示器 (鼠标悬停状态)
+            */
+            QCheckBox::indicator:hover {
+                border: 1px solid #5d5d5d;
+                background-color: #e0e0e0;
+            }
+            /*
+            * 复选框指示器 (选中状态)
+            */
+            QCheckBox::indicator:checked {
+                border: 1px solid #0078d4; /* 边框变为蓝色 */
+                background-color: #0078d4; /* 背景变为蓝色 */
+                image: url(icon/check.png); /* 添加一个对勾图标 */
+            }
                            """)
 
 

@@ -803,18 +803,14 @@ class TabPage2(QWidget):
 
         self._setup_ui()
 
-        self.tf_transient_window = None
-        self.tf_frequency_window = None
+        self.transient_window_tf = None
+        self.bode_window_tf = None
         self.discrete_window = None
         self.transient_window = None
         self.frequency_window = None
-        self.lqr_transient_window = None
-        self.lqr_frequency_window = None
 
-        self.transient_window_2 = None
-        self.frequency_window_2 = None
-        self.discrete_window = None
-        self.bode_window_2 = None
+        self.transient_window_lqr = None
+        self.frequency_window_lqr = None
 
     def _setup_ui(self):
 
@@ -887,10 +883,10 @@ class TabPage2(QWidget):
             self.btn_tf_transient_responses_clicked)
         tf_layout_4.addWidget(self.btn_tf_transient_responses)
 
-        self.btn_frequency_analyses = QPushButton("传递函数频谱分析")
-        self.btn_frequency_analyses.clicked.connect(
-            self.btn_frequency_clicked)
-        tf_layout_4.addWidget(self.btn_frequency_analyses)
+        self.btn_tf_bode_analyses = QPushButton("传递函数频谱分析")
+        self.btn_tf_bode_analyses.clicked.connect(
+            self.btn_tf_bode_clicked)
+        tf_layout_4.addWidget(self.btn_tf_bode_analyses)
 
         self.tf_layout.addLayout(tf_layout_4)
 
@@ -962,9 +958,10 @@ class TabPage2(QWidget):
 
     def get_windows(self):
 
-        windows_list = [self.transient_window_2, self.frequency_window_2,
-                        self.discrete_window, self.transient_window_2,
-                        self.frequency_window_2, self.bode_window_2]
+        windows_list = [self.transient_window_tf, self.bode_window_tf,
+                        self.discrete_window, self.transient_window,
+                        self.frequency_window, self.transient_window_lqr,
+                        self.frequency_window_lqr]
         return windows_list
 
     def create_float_box_for_lqr(self, value: str):
@@ -1149,18 +1146,18 @@ class TabPage2(QWidget):
 
         # 时域响应
         # 0. window preparation
-        if self.transient_window is None:
-            self.transient_window = TransientWindow()   # 新建
+        if self.transient_window_tf is None:
+            self.transient_window_tf = TransientWindow()   # 新建
 
-        self.transient_window.show()
-        self.transient_window.raise_()
-        self.transient_window.activateWindow()
+        self.transient_window_tf.show()
+        self.transient_window_tf.raise_()
+        self.transient_window_tf.activateWindow()
 
-        self.transient_window.clear_plots()
+        self.transient_window_tf.clear_plots()
 
-        plot_widget_i = self.transient_window.plot_widget_1
-        plot_widget_j = self.transient_window.plot_widget_2
-        plot_widget_k = self.transient_window.plot_widget_3
+        plot_widget_i = self.transient_window_tf.plot_widget_1
+        plot_widget_j = self.transient_window_tf.plot_widget_2
+        plot_widget_k = self.transient_window_tf.plot_widget_3
 
         # 1. impulse response
         t, y = ct.impulse_response(Hs, T=self.time)
@@ -1188,7 +1185,7 @@ class TabPage2(QWidget):
 
         plot_widget_k.setLabel("left", "displacement (m)")
 
-    def btn_frequency_clicked(self):
+    def btn_tf_bode_clicked(self):
 
         result = self.get_transfer_function_from_boxes()
         if not result:
@@ -1198,20 +1195,20 @@ class TabPage2(QWidget):
 
         # 频域响应
         # 0. window preparation
-        if self.frequency_window is None:
-            self.frequency_window = FrequencyWindow()   # 新建
+        if self.bode_window_tf is None:
+            self.bode_window_tf = FrequencyWindow()   # 新建
 
-        self.frequency_window.show()
-        self.frequency_window.raise_()
-        self.frequency_window.activateWindow()
+        self.bode_window_tf.show()
+        self.bode_window_tf.raise_()
+        self.bode_window_tf.activateWindow()
 
-        self.frequency_window.clear_plots()
+        self.bode_window_tf.clear_plots()
 
         # 1. frequency response
-        self.frequency_window.plot_frequency_figures(
+        self.bode_window_tf.plot_frequency_figures(
             Hs, 'b', "transfer function")
 
-        self.frequency_window.add_auxiliary_parts()
+        self.bode_window_tf.add_auxiliary_parts()
 
     def btn_discrete_control_clicked(self):
 
@@ -1359,18 +1356,18 @@ class TabPage2(QWidget):
         Gs, Gb = result
 
         # 0. window preparation
-        if self.transient_window_2 is None:
-            self.transient_window_2 = TransientWindow()   # 新建
+        if self.transient_window is None:
+            self.transient_window = TransientWindow()   # 新建
 
-        self.transient_window_2.show()
-        self.transient_window_2.raise_()
-        self.transient_window_2.activateWindow()
+        self.transient_window.show()
+        self.transient_window.raise_()
+        self.transient_window.activateWindow()
 
-        self.transient_window_2.clear_plots()
+        self.transient_window.clear_plots()
 
-        plot_widget_i = self.transient_window_2.plot_widget_1
-        plot_widget_j = self.transient_window_2.plot_widget_2
-        plot_widget_k = self.transient_window_2.plot_widget_3
+        plot_widget_i = self.transient_window.plot_widget_1
+        plot_widget_j = self.transient_window.plot_widget_2
+        plot_widget_k = self.transient_window.plot_widget_3
 
         time = self.time
 
@@ -1417,20 +1414,20 @@ class TabPage2(QWidget):
 
         Gs, Gb = result
 
-        if self.frequency_window_2 is None:
-            self.frequency_window_2 = FrequencyWindow()   # 新建
+        if self.frequency_window is None:
+            self.frequency_window = FrequencyWindow()   # 新建
 
-        self.frequency_window_2.show()
-        self.frequency_window_2.raise_()
-        self.frequency_window_2.activateWindow()
+        self.frequency_window.show()
+        self.frequency_window.raise_()
+        self.frequency_window.activateWindow()
 
-        self.frequency_window_2.clear_plots()
+        self.frequency_window.clear_plots()
 
         # 开环\闭环系统频率特性
-        self.frequency_window_2.plot_frequency_figures(Gs, 'b', '开环系统频率特性')
-        self.frequency_window_2.plot_frequency_figures(Gb, 'r', '闭环系统频率特性')
+        self.frequency_window.plot_frequency_figures(Gs, 'b', '开环系统频率特性')
+        self.frequency_window.plot_frequency_figures(Gb, 'r', '闭环系统频率特性')
 
-        self.frequency_window_2.add_auxiliary_parts()
+        self.frequency_window.add_auxiliary_parts()
 
     def simulation_preparation(self):
 
@@ -1498,18 +1495,18 @@ class TabPage2(QWidget):
             self.tabpage1.timer.stop()
 
         # 0. window preparation
-        if self.transient_window_2 is None:
-            self.transient_window_2 = TransientWindow()   # 新建
+        if self.transient_window_lqr is None:
+            self.transient_window_lqr = TransientWindow()   # 新建
 
-        self.transient_window_2.show()
-        self.transient_window_2.raise_()
-        self.transient_window_2.activateWindow()
+        self.transient_window_lqr.show()
+        self.transient_window_lqr.raise_()
+        self.transient_window_lqr.activateWindow()
 
-        self.transient_window_2.clear_plots()
+        self.transient_window_lqr.clear_plots()
 
-        plot_widget_i = self.transient_window_2.plot_widget_1
-        plot_widget_j = self.transient_window_2.plot_widget_2
-        plot_widget_k = self.transient_window_2.plot_widget_3
+        plot_widget_i = self.transient_window_lqr.plot_widget_1
+        plot_widget_j = self.transient_window_lqr.plot_widget_2
+        plot_widget_k = self.transient_window_lqr.plot_widget_3
 
         time = self.time
         nt = len(time)
@@ -1585,59 +1582,22 @@ class TabPage2(QWidget):
         c = self.lqr.c
         k = self.lqr.k
 
-        # 绘图窗口
-        if self.bode_window_2 is None:
-            self.bode_window_2 = BodeWindow()   # 新建
-
-        self.bode_window_2.show()
-        self.bode_window_2.raise_()
-        self.bode_window_2.activateWindow()
-
-        self.bode_window_2.clear_plots()
-
-        plot_widget_i = self.bode_window_2.plot_widget_1
-        plot_widget_j = self.bode_window_2.plot_widget_2
-
         # 1. 开环传递函数
         Gs = ct.tf([c, k], [m, c, k])
-
-        mag, phase, omega = ct.frequency_response(Gs)
-
-        def pens(color): return pg.mkPen(color=color, width=2)
-
-        plot_widget_i.plot(omega, 20*np.log10(mag),
-                           pen=pens('b'), name='开环位移幅值特性')
-        plot_widget_i.plot(omega, 20*np.log10(mag * omega),
-                           pen=pens('r'), name='开环速度幅值特性')
-        plot_widget_i.plot(omega, 20*np.log10(mag * omega ** 2),
-                           pen=pens('g'), name='开环加速度幅值特性')
-
-        plot_widget_j.plot(omega, phase,
-                           pen=pens('b'), name='开环位移相位特性')
-        plot_widget_j.plot(omega, phase + np.pi/2,
-                           pen=pens('r'), name='开环速度相位特性')
-        plot_widget_j.plot(omega, phase + np.pi,
-                           pen=pens('g'), name='开环加速度相位特性')
-
-        # 闭环频率特性
         # 2. 闭环传递函数
         Gb = ct.tf([c, k+K[0][0]], [m, c+K[0][1], k+K[0][0]])
 
-        mag, phase, omega = ct.frequency_response(Gb)
+        if self.frequency_window_lqr is None:
+            self.frequency_window_lqr = FrequencyWindow()   # 新建
 
-        def pens(color):
-            return pg.mkPen(color=color, width=2, style=Qt.DashLine)
+        self.frequency_window_lqr.show()
+        self.frequency_window_lqr.raise_()
+        self.frequency_window_lqr.activateWindow()
 
-        plot_widget_i.plot(omega, 20*np.log10(mag),
-                           pen=pens('b'), name='闭环位移幅值特性')
-        plot_widget_i.plot(omega, 20*np.log10(mag * omega),
-                           pen=pens('r'), name='闭环速度幅值特性')
-        plot_widget_i.plot(omega, 20*np.log10(mag * omega ** 2),
-                           pen=pens('g'), name='闭环加速度幅值特性')
+        self.frequency_window_lqr.clear_plots()
 
-        plot_widget_j.plot(omega, phase,
-                           pen=pens('b'), name='闭环位移相位特性')
-        plot_widget_j.plot(omega, phase + np.pi/2,
-                           pen=pens('r'), name='闭环速度相位特性')
-        plot_widget_j.plot(omega, phase + np.pi,
-                           pen=pens('g'), name='闭环加速度相位特性')
+        # 开环\闭环系统频率特性
+        self.frequency_window_lqr.plot_frequency_figures(Gs, 'b', '开环系统频率特性')
+        self.frequency_window_lqr.plot_frequency_figures(Gb, 'r', '闭环系统频率特性')
+
+        self.frequency_window_lqr.add_auxiliary_parts()
