@@ -804,7 +804,7 @@ class TabPage2(QWidget):
         self._setup_ui()
 
         self.transient_window_tf = None
-        self.bode_window_tf = None
+        self.frequency_window_tf = None
         self.discrete_window = None
         self.transient_window = None
         self.frequency_window = None
@@ -883,10 +883,10 @@ class TabPage2(QWidget):
             self.btn_tf_transient_responses_clicked)
         tf_layout_4.addWidget(self.btn_tf_transient_responses)
 
-        self.btn_tf_bode_analyses = QPushButton("传递函数频谱分析")
-        self.btn_tf_bode_analyses.clicked.connect(
-            self.btn_tf_bode_clicked)
-        tf_layout_4.addWidget(self.btn_tf_bode_analyses)
+        self.btn_tf_frequency_analyses = QPushButton("传递函数频谱分析")
+        self.btn_tf_frequency_analyses.clicked.connect(
+            self.btn_tf_frequency_clicked)
+        tf_layout_4.addWidget(self.btn_tf_frequency_analyses)
 
         self.tf_layout.addLayout(tf_layout_4)
 
@@ -958,7 +958,7 @@ class TabPage2(QWidget):
 
     def get_windows(self):
 
-        windows_list = [self.transient_window_tf, self.bode_window_tf,
+        windows_list = [self.transient_window_tf, self.frequency_window_tf,
                         self.discrete_window, self.transient_window,
                         self.frequency_window, self.transient_window_lqr,
                         self.frequency_window_lqr]
@@ -1185,7 +1185,7 @@ class TabPage2(QWidget):
 
         plot_widget_k.setLabel("left", "displacement (m)")
 
-    def btn_tf_bode_clicked(self):
+    def btn_tf_frequency_clicked(self):
 
         result = self.get_transfer_function_from_boxes()
         if not result:
@@ -1195,20 +1195,20 @@ class TabPage2(QWidget):
 
         # 频域响应
         # 0. window preparation
-        if self.bode_window_tf is None:
-            self.bode_window_tf = FrequencyWindow()   # 新建
+        if self.frequency_window_tf is None:
+            self.frequency_window_tf = FrequencyWindow()   # 新建
 
-        self.bode_window_tf.show()
-        self.bode_window_tf.raise_()
-        self.bode_window_tf.activateWindow()
+        self.frequency_window_tf.show()
+        self.frequency_window_tf.raise_()
+        self.frequency_window_tf.activateWindow()
 
-        self.bode_window_tf.clear_plots()
+        self.frequency_window_tf.clear_plots()
 
         # 1. frequency response
-        self.bode_window_tf.plot_frequency_figures(
+        self.frequency_window_tf.plot_frequency_figures(
             Hs, 'b', "transfer function")
 
-        self.bode_window_tf.add_auxiliary_parts()
+        self.frequency_window_tf.add_auxiliary_parts()
 
     def btn_discrete_control_clicked(self):
 

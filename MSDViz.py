@@ -187,7 +187,7 @@ class MainWindow(QMainWindow):
                 background-color: #0078d4; /* 背景变为蓝色 */
                 image: url(icon/check.png); /* 添加一个对勾图标 */
             }
-                           """)
+            """)
 
 
 if __name__ == "__main__":
