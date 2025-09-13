@@ -1435,8 +1435,6 @@ class TabPage2(QWidget):
 
         dt = self.data.dt
         self.dt = dt
-        self.time_stop = self.data.time_stop
-        self.time = np.arange(0, self.time_stop, dt)
 
         self.target_value = self.data.target_value
         self.control_type = self.data.control_type
@@ -1444,6 +1442,8 @@ class TabPage2(QWidget):
         self.frequency = self.data.frequency
         self.amplitude = self.data.amplitude
         self.excitation = self.tabpage1.excitation
+        self.time = np.arange(0, len(self.excitation)) * dt
+        self.time_stop = self.time[-1]
 
         nt = len(self.time)
 
@@ -1532,7 +1532,7 @@ class TabPage2(QWidget):
         plot_widget_j.plot(
             self.time[:-2], self.a_series[:-2], pen=pens('b'), name="闭环速度响应")
         plot_widget_k.plot(
-            self.time[:-2], self.f_series[:-2], pen=pens('b'), name="闭环加速度响应")
+            self.time[:-2], self.f_series[:-2], pen=pens('b'), name="闭环载荷")
 
         # 2. No Control
         x_series = np.zeros(nt, dtype=float)
@@ -1554,7 +1554,7 @@ class TabPage2(QWidget):
         plot_widget_j.plot(
             self.time[:-2], a_series[:-2], pen=pens('g'), name="开环速度响应")
         plot_widget_k.plot(
-            self.time[:-2], f_series[:-2], pen=pens('g'), name="开环加速度响应")
+            self.time[:-2], f_series[:-2], pen=pens('g'), name="开环载荷")
 
     def btn_lqr_frequency_clicked(self):
 
